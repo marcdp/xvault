@@ -14,6 +14,10 @@ XVault is built around a simple idea:
 
 XVault supports modern cryptography, OS keyring integration, and flexible project configuration to make secret management safe and developer-friendly.
 
+## Single Source of Truth
+
+XVault is designed to act as a **single source of truth** for all sensitive configuration a project needs (secrets, tokens, passwords, certificates, and file blobs). From this encrypted vault, you can **derive** or **export** the exact formats required by your tooling (e.g., `.env`, JSON config, certificate files) without duplicating sensitive values across multiple files or repos.
+
 ---
 
 ## Contents
@@ -72,7 +76,7 @@ XVault focuses on a **different niche** than most secret-management tools:
 | Encryption algorithm | AES-256-GCM | AES-256-GCM |
 | Key derivation | Argon2id | Not applicable (external keys) |
 | Key storage | OS keyring (optional cache) | External key providers |
-| File format | JSON vault file | YAML / JSON / ENV |
+| File format | XVault file | YAML / JSON / ENV |
 | Git-friendly storage | Yes | Yes |
 | CLI workflow | Developer-oriented | DevOps / infrastructure-oriented |
 | External dependencies | None required | Often requires KMS / GPG / Age |
@@ -229,7 +233,7 @@ pip install .
 xvault create dev
 ```
 
-After creating a new vault, it is unlocked (key cached in OS keyring)
+After creating a new vault, it is unlocked (key cached in the OS keyring)
 
 ### List vaults
 
@@ -284,7 +288,7 @@ API_KEY=abcdef123
 ### Import JSON
 
 ```bash
-xvault import dev config.json
+xvault import dev config.xvault
 ```
 
 Example:
@@ -298,7 +302,17 @@ Example:
 
 ---
 
-## Export Secrets
+## Export Secrets 
+
+### Derive Project Secrets from the Vault
+
+A common problem in real projects is secret sprawl: the same values end up duplicated across `.env`, CI variables, deployment scripts, and certificate files.
+
+XVault avoids this by storing everything in one place and generating the rest on demand:
+
+- Store secrets once in XVault
+- Export to the format your project needs (`.env`, JSON, etc.)
+- (Optional) export file entries (certs/keys) back to real files when needed
 
 Export vault contents:
 
@@ -360,7 +374,7 @@ Variables:
 Example resulting file:
 
 ```
-../dev/secrets/myproject-dev.json
+../dev/secrets/myproject-dev.xvault
 ```
 
 This allows multiple repositories to share a centralized secrets directory.
