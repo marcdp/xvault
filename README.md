@@ -6,7 +6,7 @@
 ![KDF](https://img.shields.io/badge/KDF-Argon2id-orange)
 ![PyPI](https://img.shields.io/pypi/v/xvault)
 
-**XVault** is a portable encrypted vault designed for **developers** to securely store secrets, tokens, and sensitive files while keeping encrypted vaults safe to store in Git repositories.
+**XVault** is a portable encrypted vault designed for **developers** to securely store secrets, tokens, certificates, and sensitive files while keeping encrypted vaults safe to store in Git repositories.
 
 XVault is built around a simple idea:
 
@@ -17,6 +17,8 @@ XVault supports modern cryptography, OS keyring integration, and flexible projec
 ## Single Source of Truth
 
 XVault is designed to act as a **single source of truth** for all sensitive configuration a project needs (secrets, tokens, passwords, certificates, and file blobs). From this encrypted vault, you can **derive** or **export** the exact formats required by your tooling (e.g., `.env`, JSON config, certificate files) without duplicating sensitive values across multiple files or repos.
+
+XVault is optimized for **solo developers and small teams** who want a **local-first** vault that works with Git without requiring external infrastructure (KMS providers or a Vault server).
 
 ---
 
@@ -29,7 +31,6 @@ XVault is designed to act as a **single source of truth** for all sensitive conf
 - [Import Secrets](#import-secrets)
 - [Export Secrets](#export-secrets)
 - [Project Configuration](#project-configuration)
-- [Architecture Overview](#architecture-overview)
 - [Roadmap](#roadmap)
 - [License](#license)
 
@@ -65,23 +66,25 @@ XVault focuses on a **different niche** than most secret-management tools:
 - **Portable** — no dependency on cloud KMS providers
 
 
-### Comparison with SOPS
+### Comparison with SOPS and git-crypt
 
-**XVault** and [SOPS (Secrets OPerationS)](https://github.com/mozilla/sops) share a similar goal: storing encrypted secrets safely inside version-controlled files. Both tools allow developers to keep encrypted configuration in Git while protecting the decryption keys locally. However, their design philosophies differ. SOPS focuses on infrastructure and DevOps workflows (Kubernetes, Terraform, cloud KMS integration), whereas **XVault** is designed primarily as a **developer-centric vault**, emphasizing simplicity, local password-based encryption, and flexible secret storage for development environments and personal projects.
+**XVault**, [SOPS (Secrets OPerationS)](https://github.com/mozilla/sops), and [git-crypt](https://github.com/AGWA/git-crypt) share a similar goal: storing encrypted secrets safely inside version-controlled files. They allow developers to keep encrypted configuration in Git while protecting the decryption keys locally. However, their design philosophies differ. SOPS focuses on infrastructure and DevOps workflows (Kubernetes, Terraform, cloud KMS integration), whereas **XVault** is designed primarily as a **developer-centric vault**, emphasizing simplicity, local password-based encryption, and flexible secret storage for development environments and personal projects.
 
-| Feature | XVault | SOPS |
-|-------|-------|------|
-| Primary goal | Developer secret vault | Infrastructure secret management |
-| Encryption model | Password-derived key (Argon2id) | External key management (KMS, GPG, Age) |
-| Encryption algorithm | AES-256-GCM | AES-256-GCM |
-| Key derivation | Argon2id | Not applicable (external keys) |
-| Key storage | OS keyring (optional cache) | External key providers |
-| File format | XVault file | YAML / JSON / ENV |
-| Git-friendly storage | Yes | Yes |
-| CLI workflow | Developer-oriented | DevOps / infrastructure-oriented |
-| External dependencies | None required | Often requires KMS / GPG / Age |
-| Secret import/export | dotenv, JSON | YAML/JSON editing |
-| Typical use case | Developer secrets, local environments, personal vaults | Kubernetes, CI/CD, infrastructure configuration |
+| Feature | XVault | SOPS | git-crypt |
+|---|---|---|---|
+| Primary goal | Developer secret vault | Infrastructure secret management | Encrypt selected files in a Git repo |
+| Encryption model | Password-derived key (Argon2id) | External key management (KMS, GPG, Age) | Key-based (GPG) / shared symmetric key for collaborators |
+| Encryption algorithm | AES-256-GCM | AES-256-GCM | AES (transparent file encryption) |
+| Key derivation | Argon2id | Not applicable (external keys) | Not a focus (GPG-managed keys) |
+| Key storage | OS keyring (optional cache) | External key providers | GPG keychain |
+| File format | XVault file | YAML / JSON / ENV | Original file formats (encrypted blobs in Git) |
+| Git-friendly storage | Yes | Yes | Yes (encrypted blobs in Git) |
+| CLI workflow | Developer-oriented | DevOps / infrastructure-oriented | Git workflow oriented |
+| External dependencies | None required | Often requires KMS / GPG / Age | Requires GPG (for multi-user) |
+| Secret import/export | dotenv, JSON | YAML/JSON editing | Not built-in |
+| Typical use case | Developer secrets, local environments, personal vaults | Kubernetes, CI/CD, infrastructure configuration | Team repos where only some files should be readable to authorized users |
+
+**In short:** XVault is a **local-first, developer-oriented vault** optimized for keeping a *single source of truth* and **deriving/exporting** the formats your projects need. SOPS is best when you want **infrastructure-focused workflows** and integration with KMS/GPG/Age key management. git-crypt is ideal when you want **transparent encryption of specific files** inside a Git repo, without a structured secrets store or import/export pipeline.
 
 ### Example workflow
 
@@ -124,7 +127,7 @@ This makes XVault particularly well-suited for:
 - AES-256-GCM authenticated encryption
 - Argon2id password-based key derivation
 - Cross-platform keyring integration
-- Git-friendly JSON vault files
+- Git-friendly `.xvault` files (JSON-based)
 - dotenv and JSON import/export
 - Multiple vault stores per project
 - Flexible vault location configuration
@@ -154,11 +157,28 @@ XVault is designed to protect secrets stored in version-controlled repositories.
 
 Argon2id parameters:
 
-time_cost = 5  
-memory_cost = 128 MB  
-parallelism = 4  
+```
+time_cost = 5
+memory_cost = 128 MB
+parallelism = 4
+```
 
 These parameters significantly increase the cost of offline password brute-force attacks.
+
+### High-level encryption flow diagram
+```mermaid
+flowchart TD
+  U[User enters password] --> KDF[Argon2id<br/>password + salt -> 32-byte key]
+  KDF -->|optional| KR[Store derived key in OS keyring<br/>Windows DPAPI / macOS Keychain / Linux Secret Service]
+  KDF --> AES[AES-256-GCM encryption/decryption]
+  KR --> AES
+
+  AES --> ENC[Encrypt secret value<br/>random nonce + ciphertext + tag]
+  ENC --> FILE[Write to .xvault file<br/>value stored as enc:v1:...]
+  FILE --> DEC[Read encrypted value from .xvault file]
+  DEC --> AES
+  AES --> OUT[Decrypt -> plaintext value]
+```  
 
 ### Limitations
 
@@ -168,6 +188,7 @@ XVault does **not** protect against:
 - malicious code execution
 - memory extraction attacks
 - weak user passwords
+
 
 ---
 
@@ -214,7 +235,7 @@ Clone the repository:
 
 ```bash
 # clone the repository:
-git clone https://github.com/<your-user>/xvault.git
+git clone https://github.com/marcdp/xvault.git
 # install dependencies:
 pip install -r requirements.txt
 # run the CLI:
@@ -288,7 +309,7 @@ API_KEY=abcdef123
 ### Import JSON
 
 ```bash
-xvault import dev config.xvault
+xvault import dev config.json
 ```
 
 Example:
@@ -381,40 +402,12 @@ This allows multiple repositories to share a centralized secrets directory.
 
 ---
 
-## Architecture Overview
-
-```
-+----------------------+
-|      CLI (xvault)    |
-+----------+-----------+
-           |
-           v
-+----------------------+
-|   Vault JSON Store   |
-| encrypted values     |
-+----------+-----------+
-           |
-           v
-+----------------------+
-|  Crypto Layer        |
-| Argon2id + AES-GCM   |
-+----------+-----------+
-           |
-           v
-+----------------------+
-| OS Keyring           |
-| DPAPI / Keychain     |
-+----------------------+
-```
-
----
-
 ## Roadmap
 
 Planned improvements:
 
-- VSCode extension (to manage xvault contents)
-- rekey password
+- rekey password: `xvault repassword MYSTORE`
+- VSCode extension (to manage xvault contents as a virtual filesystem)
 
 ---
 
