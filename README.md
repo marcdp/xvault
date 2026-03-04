@@ -16,9 +16,11 @@ XVault supports modern cryptography, OS keyring integration, and flexible projec
 
 ## Single Source of Truth
 
-XVault is designed to act as a **single source of truth** for all sensitive configuration a project needs (secrets, tokens, passwords, certificates, and file blobs). From this encrypted vault, you can **derive** or **export** the exact formats required by your tooling (e.g., `.env`, JSON config, certificate files) without duplicating sensitive values across multiple files or repos.
+## Single Source of Truth
 
-XVault is optimized for **solo developers and small teams** who want a **local-first** vault that works with Git without requiring external infrastructure (KMS providers or a Vault server).
+XVault acts as a **single source of truth** for all sensitive configuration a project needs (secrets, tokens, passwords, certificates, and file blobs). From this encrypted vault, you can **derive/export** the exact formats your tooling expects (e.g., `.env`, JSON config, certificate files) without duplicating plaintext secrets across multiple files or repositories.
+
+To minimize **cognitive load**, XVault keeps the workflow intentionally simple: one encrypted store, secure defaults, and straightforward commands—no servers to run, no KMS to configure, and no complex policy systems. It’s optimized for **solo developers and small teams** who want a **local-first** vault that integrates cleanly with Git.
 
 ---
 
@@ -55,6 +57,7 @@ XVault focuses on a **different niche** than most secret-management tools:
 - **Developer-oriented** — designed for development workflows
 - **Portable** — no dependency on cloud KMS providers
 
+The focus is **developer ergonomics**: fewer moving parts, fewer decisions, and a predictable workflow that works the same across projects.
 
 ### Comparison with SOPS and git-crypt
 
@@ -105,15 +108,16 @@ XVault includes an interactive editor (similar to SOPS) that decrypts values in-
 
 ### Design Philosophy
 
-- **SOPS** integrates deeply with cloud infrastructure and centralized key management systems.
-- **XVault** prioritizes simplicity and portability by using password-derived encryption and local key caching.
+**XVault** prioritizes **developer ergonomics**: a predictable workflow, minimal setup, and secure defaults (password → key → keyring → encrypt/decrypt).
 
 This makes XVault particularly well-suited for:
 
 - developer environments
 - local secret management
-- personal encrypted vaults
+- small teams encrypted vaults
 - Git-friendly secret storage without external infrastructure
+- personal encrypted vaults
+
 ---
 
 ## Features
