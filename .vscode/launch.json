@@ -1,0 +1,11 @@
+{
+    "configurations": [
+        ,{
+            "name": "Python Debugger: XVault",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "xvault",
+            "args": ["list"],
+        }
+    ]
+}
