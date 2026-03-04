@@ -1,6 +1,6 @@
 from pprint import pformat
+from pwinput import pwinput
 import sys
-import getpass
 import json
 from dotenv import dotenv_values
 import secrets as secrets_module
@@ -17,12 +17,12 @@ def error(message: str) -> None:
     print(f"{RED}{message}{RESET}", file=sys.stderr)
 
 def ask_password(confirm: bool = False, min_length: int = 8) -> str:
-    result = getpass.getpass("Enter password: ", echo_char="*")
+    result = pwinput("Enter password: ", mask="*")
     if confirm:
         if len(result) < min_length:
             error(f"Password must be at least {min_length} characters long.")
             sys.exit(1)
-        result_confirm = getpass.getpass("Confirm password: ", echo_char="*")
+        result_confirm = pwinput("Confirm password: ", mask="*")
         if result != result_confirm:
             error("Passwords do not match.")
             sys.exit(1)
@@ -167,8 +167,8 @@ def set(
     # if value is not provided, read from stdin or ask interactively
     if value is None:
         if sys.stdin.isatty():
-            value1 = getpass.getpass(f"Enter secret value:   ", echo_char="*")
-            value2 = getpass.getpass(f"Confirm secret value: ", echo_char="*")
+            value1 = pwinput(f"Enter secret value:   ", mask="*")
+            value2 = pwinput(f"Confirm secret value: ", mask="*")
             if value1 != value2:
                 error("Aborting update: values do not match.")
                 return -1
