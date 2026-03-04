@@ -101,9 +101,7 @@ API_KEY=12345678
 
 XVault includes an interactive editor (similar to SOPS) that decrypts values in-memory, opens an editor view, and re-encrypts on save.
 
-![XVault integrated editor demo](docs/readme-demo.gif)
-
-<img src="docs/readme-demo.gif" alt="Demo" width="600" />
+<img src="docs/readme-demo.gif" alt="XVault demo" width="600" />
 
 ### Design Philosophy
 
