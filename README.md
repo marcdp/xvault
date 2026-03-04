@@ -16,8 +16,6 @@ XVault supports modern cryptography, OS keyring integration, and flexible projec
 
 ## Single Source of Truth
 
-## Single Source of Truth
-
 XVault acts as a **single source of truth** for all sensitive configuration a project needs (secrets, tokens, passwords, certificates, and file blobs). From this encrypted vault, you can **derive/export** the exact formats your tooling expects (e.g., `.env`, JSON config, certificate files) without duplicating plaintext secrets across multiple files or repositories.
 
 To minimize **cognitive load**, XVault keeps the workflow intentionally simple: one encrypted store, secure defaults, and straightforward commands—no servers to run, no KMS to configure, and no complex policy systems. It’s optimized for **solo developers and small teams** who want a **local-first** vault that integrates cleanly with Git.
