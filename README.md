@@ -5,7 +5,7 @@
 ![Security](https://img.shields.io/badge/encryption-AES--256--GCM-purple)
 ![KDF](https://img.shields.io/badge/KDF-Argon2id-orange)
 
-**XVault** is a portable encrypted vault designed for developers to securely store secrets, tokens, and sensitive files while keeping encrypted vaults safe to store in Git repositories.
+**XVault** is a portable encrypted vault designed for **developers** to securely store secrets, tokens, and sensitive files while keeping encrypted vaults safe to store in Git repositories.
 
 The tool is built around a simple idea:
 
@@ -110,7 +110,13 @@ The vault file can safely be stored in Git because **all secret values are encry
 
 # Installation
 
-Clone the repository:
+Install as pip command:
+
+```bash
+pip install xvault
+```
+
+or clone the repository:
 
 ```bash
 git clone https://github.com/<your-user>/xvault.git
@@ -144,6 +150,8 @@ pip install .
 xvault create dev
 ```
 
+After creating a new vault, it is unlocked (key cached in OS keyring)
+
 ### List vaults
 
 ```bash
@@ -153,11 +161,8 @@ xvault list
 Example output:
 
 ```
-Stores
-------
-
-default   - 3 keys (unlocked)
-dev       - 1 key (locked)
+default   3 keys  unlocked
+dev       1 key   locked
 ```
 
 ### Store a secret
@@ -234,7 +239,7 @@ Formats supported:
 
 # Vault Unlocking
 
-xvault can cache vault keys securely using the system keyring.
+XVault can cache vault keys securely using the system keyring.
 
 Unlock a store:
 
@@ -351,34 +356,11 @@ XVault is useful for:
 
 Planned improvements:
 
-- web UI vault editor
-- virtual filesystem support
-- VSCode extension
-- vault synchronization
-- secret rotation support
-- encrypted document vault mode
-
----
-
-# Related Projects
-
-This tool is part of a broader ecosystem of developer tools:
-
-| Project | Description |
-|--------|-------------|
-| **xtrader** | algorithmic trading engine |
-| **xshell** | modular web runtime |
-| **xvault** | encrypted developer vault |
+- VSCode extension (to manage xvault contents)
+- rekey password
 
 ---
 
 # License
 
 MIT License
-
----
-
-# Author
-
-Marc Delos  
-Software engineer focused on distributed systems, algorithmic trading platforms, and developer tooling.
