@@ -103,6 +103,8 @@ XVault includes an interactive editor (similar to SOPS) that decrypts values in-
 
 ![XVault integrated editor demo](docs/readme-demo.gif)
 
+<img src="docs/readme-demo.gif" alt="Demo" width="600" />
+
 ### Design Philosophy
 
 - **SOPS** integrates deeply with cloud infrastructure and centralized key management systems.
