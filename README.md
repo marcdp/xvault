@@ -4,10 +4,11 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Security](https://img.shields.io/badge/encryption-AES--256--GCM-purple)
 ![KDF](https://img.shields.io/badge/KDF-Argon2id-orange)
+![PyPI](https://img.shields.io/pypi/v/xvault)
 
 **XVault** is a portable encrypted vault designed for **developers** to securely store secrets, tokens, and sensitive files while keeping encrypted vaults safe to store in Git repositories.
 
-The tool is built around a simple idea:
+XVault is built around a simple idea:
 
 > **Keep encrypted secrets versioned in Git while protecting the keys locally.**
 
@@ -15,7 +16,33 @@ XVault supports modern cryptography, OS keyring integration, and flexible projec
 
 ---
 
-# Why XVault
+## Contents
+- [Motivation](#motivation)
+- [Features](#features)
+- [Security Model](#security-model)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Import Secrets](#import-secrets)
+- [Export Secrets](#export-secrets)
+- [Project Configuration](#project-configuration)
+- [Architecture Overview](#architecture-overview)
+- [Roadmap](#roadmap)
+- [License](#license)
+
+---
+
+## Motivation
+
+Many developers store secrets in `.env` files or private folders.
+These files are frequently committed accidentally to Git repositories.
+
+Tools such as **Hashicorp Vault** or **Mozilla SOPS** solve this problem
+for infrastructure environments, but they often require external
+key management systems.
+
+XVault was created to provide a **lightweight developer-focused vault**
+that works locally, integrates with Git workflows, and requires no
+external infrastructure.
 
 Developers often need to store:
 
@@ -26,20 +53,19 @@ Developers often need to store:
 - private keys
 - sensitive documents
 
-These frequently end up in `.env` files, local folders, or worse — accidentally committed to Git.
+XVault focuses on a **different niche** than most secret-management tools:
 
-XVault solves this by providing:
+- **Local-first** — works without external infrastructure
+- **Git-friendly** — encrypted files are safe to version in repositories
+- **Developer-oriented** — designed for development workflows
+- **Portable** — no dependency on cloud KMS providers
 
-- **Encrypted storage**
-- **Git-friendly files**
-- **Secure key caching**
-- **CLI automation**
 
-## Comparison with SOPS
+### Comparison with SOPS
 
-**XVault** and **SOPS (Secrets OPerationS)**(https://github.com/mozilla/sops))share a similar goal: storing encrypted secrets safely inside version-controlled files. Both tools allow developers to keep encrypted configuration in Git while protecting the decryption keys locally. However, their design philosophies differ. SOPS focuses on infrastructure and DevOps workflows (Kubernetes, Terraform, cloud KMS integration), whereas **xvault** is designed primarily as a **developer-centric vault**, emphasizing simplicity, local password-based encryption, and flexible secret storage for development environments and personal projects.
+**XVault** and [SOPS (Secrets OPerationS)](https://github.com/mozilla/sops) share a similar goal: storing encrypted secrets safely inside version-controlled files. Both tools allow developers to keep encrypted configuration in Git while protecting the decryption keys locally. However, their design philosophies differ. SOPS focuses on infrastructure and DevOps workflows (Kubernetes, Terraform, cloud KMS integration), whereas **XVault** is designed primarily as a **developer-centric vault**, emphasizing simplicity, local password-based encryption, and flexible secret storage for development environments and personal projects.
 
-| Feature | xvault | SOPS |
+| Feature | XVault | SOPS |
 |-------|-------|------|
 | Primary goal | Developer secret vault | Infrastructure secret management |
 | Encryption model | Password-derived key (Argon2id) | External key management (KMS, GPG, Age) |
@@ -53,12 +79,35 @@ XVault solves this by providing:
 | Secret import/export | dotenv, JSON | YAML/JSON editing |
 | Typical use case | Developer secrets, local environments, personal vaults | Kubernetes, CI/CD, infrastructure configuration |
 
+### Example workflow
+
+```
+D:\Reps\myrepos> xvault create dev
+Enter password: ********
+Confirm password: ********
+Store created: dev
+Path: D:\Reps\myrepos\.secrets\xvault-dev.xvault
+Status: unlocked
+
+D:\Reps\myrepos> xvault set dev API_KEY
+Enter secret value:   ********
+Confirm secret value: ********
+API_KEY created
+
+D:\Reps\myrepos> xvault get dev API_KEY
+12345678
+
+D:\Reps\myrepos> xvault export dev --format env
+API_KEY=12345678
+
+```
+
 ### Design Philosophy
 
 - **SOPS** integrates deeply with cloud infrastructure and centralized key management systems.
 - **XVault** prioritizes simplicity and portability by using password-derived encryption and local key caching.
 
-This makes XVault particularly suitable for:
+This makes XVault particularly well-suited for:
 
 - developer environments
 - local secret management
@@ -66,7 +115,7 @@ This makes XVault particularly suitable for:
 - Git-friendly secret storage without external infrastructure
 ---
 
-# Features
+## Features
 
 - AES-256-GCM authenticated encryption
 - Argon2id password-based key derivation
@@ -79,7 +128,46 @@ This makes XVault particularly suitable for:
 
 ---
 
-# Example Vault File
+
+## Security Model
+
+XVault is designed to protect secrets stored in version-controlled repositories.
+
+### Threats mitigated
+
+- accidental disclosure of secrets committed to Git
+- unauthorized access to vault files without the password
+- offline brute-force attacks through strong password-based key derivation
+
+### Cryptographic design
+
+| Component | Algorithm |
+|----------|-----------|
+| Key derivation | Argon2id |
+| Encryption | AES-256-GCM |
+| Nonce | 96-bit random nonce |
+| Authentication | GCM tag |
+
+Argon2id parameters:
+
+time_cost = 5  
+memory_cost = 128 MB  
+parallelism = 4  
+
+These parameters significantly increase the cost of offline password brute-force attacks.
+
+### Limitations
+
+XVault does **not** protect against:
+
+- compromised host machines
+- malicious code execution
+- memory extraction attacks
+- weak user passwords
+
+---
+
+## Example Vault File
 
 Vault files are JSON documents containing encrypted values.
 
@@ -108,41 +196,32 @@ The vault file can safely be stored in Git because **all secret values are encry
 ---
 
 
-# Installation
+## Installation
 
-Install as pip command:
+Install from PyPI:
 
 ```bash
 pip install xvault
 ```
 
-or clone the repository:
+### Install from source (development)
+
+Clone the repository:
 
 ```bash
+# clone the repository:
 git clone https://github.com/<your-user>/xvault.git
-```
-
-Install dependencies:
-
-```bash
+# install dependencies:
 pip install -r requirements.txt
-```
-
-Run the CLI:
-
-```bash
+# run the CLI:
 python -m xvault
-```
-
-Or install as a command:
-
-```bash
+# or install as a command:
 pip install .
 ```
 
 ---
 
-# Quick Start
+## Quick Start
 
 ### Create a vault
 
@@ -185,9 +264,9 @@ xvault remove dev API_KEY
 
 ---
 
-# Import Secrets
+## Import Secrets
 
-xvault can import from common formats.
+XVault can import from common formats.
 
 ### Import `.env`
 
@@ -219,7 +298,7 @@ Example:
 
 ---
 
-# Export Secrets
+## Export Secrets
 
 Export vault contents:
 
@@ -237,7 +316,7 @@ Formats supported:
 
 ---
 
-# Vault Unlocking
+## Vault Unlocking
 
 XVault can cache vault keys securely using the system keyring.
 
@@ -261,14 +340,14 @@ Supported keyring backends:
 
 ---
 
-# Project Configuration
+## Project Configuration
 
 Vault location can be configured per Git repository.
 
 Create a `.xvault` file in the project root:
 
 ```
-file = ../dev/secrets/{project}-{name}.json
+file = ../dev/secrets/{project}-{name}.xvault
 ```
 
 Variables:
@@ -288,30 +367,7 @@ This allows multiple repositories to share a centralized secrets directory.
 
 ---
 
-# Security Design
-
-XVault uses modern cryptographic primitives.
-
-| Component | Algorithm |
-|----------|-----------|
-| Key derivation | Argon2id |
-| Encryption | AES-256-GCM |
-| Nonce size | 96 bits |
-| Key size | 256 bits |
-
-Recommended KDF parameters:
-
-```
-time_cost = 5
-memory_cost = 128 MB
-parallelism = 4
-```
-
-These settings significantly increase resistance to brute-force attacks.
-
----
-
-# Architecture Overview
+## Architecture Overview
 
 ```
 +----------------------+
@@ -339,20 +395,7 @@ These settings significantly increase resistance to brute-force attacks.
 
 ---
 
-# Use Cases
-
-XVault is useful for:
-
-- managing `.env` secrets
-- storing API credentials
-- secure developer configuration
-- Git-friendly encrypted storage
-- automation scripts and CI setups
-- personal encrypted document vaults
-
----
-
-# Roadmap
+## Roadmap
 
 Planned improvements:
 
@@ -361,6 +404,6 @@ Planned improvements:
 
 ---
 
-# License
+## License
 
 MIT License
