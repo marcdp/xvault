@@ -1,2 +1,2 @@
-# file pattern to use for secrets storage (in this case secrets will be stored encripted in an external private repository)
+# file pattern to use for vault storage (in this case vault will be stored in an external private git repository)
 file = ../dev/.xvault/{project}-{name}.xvault

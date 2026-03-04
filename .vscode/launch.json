@@ -1,0 +1,13 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: xvault",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "xvault",
+            "console": "integratedTerminal",
+            "args": ["list","default"]
+        }
+    ]
+}

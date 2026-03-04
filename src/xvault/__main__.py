@@ -1,4 +1,5 @@
 from pprint import pformat
+import cryptography
 from pwinput import pwinput
 import sys
 import json
@@ -8,13 +9,20 @@ from typing import Annotated
 from .xvault import XVault
 from dprojectstools.commands import command, Argument, Flag, CommandsManager
 from dprojectstools.utils.env import format_env_line
+from importlib.metadata import version, PackageNotFoundError
 
 
 # utils
+def get_app_version() -> str:
+    try:
+        return version("xvault")
+    except PackageNotFoundError:
+        return "0.0.0+dev"
+    
 def error(message: str) -> None:
     RED = "\033[31m"
     RESET = "\033[0m"
-    print(f"{RED}{message}{RESET}", file=sys.stderr)
+    print(f"{RED}{message}{RESET}", file=sys.stderr, flush=True)
 
 def ask_password(confirm: bool = False, min_length: int = 8) -> str:
     result = pwinput("Enter password: ", mask="*")
@@ -78,6 +86,7 @@ def listcmd(
         db_names = XVault.get_db_names()
         width = max(len(db_name) for db_name in db_names) if db_names else 0
         for db_name in db_names:
+            
             xvault = XVault(db_name)
             keys_count = len(xvault.keys())
             locked = xvault.is_locked()
@@ -123,11 +132,11 @@ def get(
     if XVault.is_locked_db(dbname):
         password = ask_password()
     # create instance
-    secrets = XVault(dbname, password = password)
+    xvault = XVault(dbname, password = password)
     # action
-    if secrets.exists(key):
-        entry = secrets.get(key)
-        print(entry.value)
+    if xvault.exists(key):
+        value = xvault.getValue(key)
+        print(value)
     else:
         error(f"Secret '{key}' not found.") 
         return -1
@@ -138,6 +147,7 @@ def get(
     "xvault set dev mysecret myvalue",
     "xvault set dev mysecret myvalue --description 'My secret' --services api1,backend1 --type password --force",
     "xvault set dev mysecret --generate --length 64",
+    "xvault set dev mysecret {\"username\": \"user1\", \"password\": \"pass123\"} --type object",
     "echo myvalue | xvault set dev mysecret"
 ])
 def set(
@@ -354,16 +364,17 @@ def export(
     # action
     if format == "json":
         # .json
-        dict = {}
+        dictionary = {}
         for key in xvault.keys():
-            entry = xvault.get(key)
-            dict[key] = entry.value
-        print(json.dumps(dict, indent=2))
+            dictionary[key] = xvault.getValue(key)
+        print(json.dumps(dictionary, indent=2))
     elif format == "env":
         # .env
         for key in xvault.keys():
-            entry = xvault.get(key)
-            print(format_env_line(key, entry.value))
+            value = xvault.getValue(key)
+            if isinstance(value, dict) or isinstance(value, list):
+                value = json.dumps(value)
+            print(format_env_line(key, value))
     elif format == "xvault":
         # .xvault (internal format)
         print(xvault.to_json())
@@ -503,12 +514,22 @@ def imports(
     print(f"Done. {new_count} new, {updated_count} updated, {untouched_count} untouched, {skipped_count} skipped..")
 
 
+@command("Print version", alias=["version"], examples=[
+    "xvault version"
+])
+def versioncmd(
+    ):
+    print(f"xvault {get_app_version()}")
+
+
 # main
 def main():
     commandsManager = CommandsManager()
     commandsManager.register(module = sys.modules[__name__])
     try:
         commandsManager.execute(sys.argv, default_show_help = True)
+    except cryptography.exceptions.InvalidTag as ee:
+        raise
     except Exception as e:        
         error(f"{e}")
         sys.exit(1)

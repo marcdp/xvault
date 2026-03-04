@@ -1,4 +1,5 @@
 import base64
+import json
 from dotenv import dotenv_values
 from hashlib import sha256
 from pathlib import Path
@@ -73,12 +74,22 @@ class XVault():
         entry = self._store.get(name)
         entryCloned = copy.deepcopy(entry)
         entryCloned.value = self._decrypt_value(entryCloned.value)
+        # conversion
+        if entry.type == "json":
+            entryCloned.value = json.loads(entryCloned.value)
+        # return
         return entryCloned
 
     def getValue(self, name):
         # get entry value
         entry = self._store.get(name)
-        return self._decrypt_value(entry.value)
+        value = self._decrypt_value(entry.value)
+        # conversion
+        if entry.type == "json":
+            value = json.loads(value)
+            value = json.dumps(value, indent=2)
+        # return        
+        return value
 
     def exists(self, name):
         # exists entry
@@ -106,8 +117,14 @@ class XVault():
             entry.description = description
         if meta is not None and len(meta) > 0:
             entry.meta = meta
+        # conversion for json type
+        if entry.type == "json" and isinstance(value, str):
+            value = json.loads(value)
+            value = json.dumps(value)
+        # encrypt and set
         entry.value = self._encrypt_value(value)
         self._store.set(entry)
+        # save
         self._save()
     
     def keys(self):
@@ -127,6 +144,9 @@ class XVault():
         # decrypt
         for entry in tmp.secrets.values():
             entry.value = self._decrypt_value(entry.value)
+            # conversion
+            if entry.type == "json":
+                entry.value = json.loads(entry.value)
         # edit
         xeditor = XEditor()
         text = tmp.to_json()
@@ -135,17 +155,29 @@ class XVault():
         if result != None:
             # load
             tmp = SecretsStore.from_json(self._path.stem, result)
+            # conversion
+            for key in tmp.list_keys():
+                entry = tmp.get(key)
+                if entry.type == "json" and isinstance(entry.value, str):
+                    entry.value = json.loads(entry.value)
             # encrypt
             for key in tmp.list_keys():
-                entry = tmp.get(key)                
+                entry = tmp.get(key)
+                entry_value = entry.value
+                # conversion
+                if entry.type == "json":
+                    entry_value = json.dumps(entry_value)
                 # check if changed
                 if self._store.exists(key):
-                    old_entry = self._store.get(key)
-                    if entry.value == self._decrypt_value(old_entry.value):
-                        entry.value = old_entry.value
+                    old_entry = self._store.get(key)                    
+                    old_entry_value = old_entry.value
+                    if old_entry.type == "json":
+                        old_entry_value = json.dumps(old_entry_value)
+                    if entry_value == old_entry_value:
+                        entry_value = old_entry_value
                         continue
                 # encrypt changed value only
-                entry.value = self._encrypt_value(entry.value)       
+                entry.value = self._encrypt_value(entry_value)
             # reassign
             self._store = tmp
             # save
@@ -158,11 +190,20 @@ class XVault():
         xeditor = XEditor()
         text = entry.value
         text = self._decrypt_value(text)
+        # conversion
         if text == "":
             text = " "
+        if entry.type == "json" and isinstance(text, str):
+            text = json.dumps(json.loads(text), indent=4)
+        # edit
         result = xeditor.editText(text, format = entry.type)
         # apply changes
         if result != None:
+            # conversion
+            if entry.type == "json" and isinstance(result, str):
+                result = json.loads(result)
+                result = json.dumps(result)
+            # set
             entry.value = self._encrypt_value(result)
             self._store.set(entry)
             self._save()
@@ -188,7 +229,10 @@ class XVault():
         # to json
         tmp = copy.deepcopy(self._store)
         for entry in tmp.secrets.values():
-            entry.value = self._decrypt_value(entry.value)
+            if entry.type == "json":
+                entry.value = json.loads(self._decrypt_value(entry.value))
+            else:
+                entry.value = self._decrypt_value(entry.value)
         return tmp.to_json()
 
 
@@ -351,7 +395,7 @@ class XVault():
         # return
         return self._key
     
-    def _decrypt_value(self, encrypted_value):
+    def _decrypt_value(self, encrypted_value: str) -> str:
         # decrypt value
         key = self._get_key()
         if self._store.meta.crypto_version == 1:
@@ -372,7 +416,7 @@ class XVault():
         # error
         raise ValueError("Invalid crypto version")
     
-    def _encrypt_value(self, value):
+    def _encrypt_value(self, value: str) -> str:
         # encrypt value
         key = self._get_key()
         if self._store.meta.crypto_version == 1:

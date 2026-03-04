@@ -26,7 +26,6 @@ import shutil
 
 # xvault
 xvault = XVault("default")
-print(xvault.getValue("PYPI_AUTH_TOKEN"))
 
 # controllers
 @command("Package build", index = 10)

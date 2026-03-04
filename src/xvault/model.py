@@ -21,10 +21,8 @@ class SecretEntry:
     def validate(self) -> None:
         if not self.type:
             raise ValueError(f"Secret '{self.key}' missing type")
-
         if not self.services:
             raise ValueError(f"Secret '{self.key}' must define services")
-
         if self.value == None:
             raise ValueError(f"Secret '{self.key}' value must be something")
 
