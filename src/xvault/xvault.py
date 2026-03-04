@@ -16,11 +16,11 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 # consts
 KEYRING_APP = "xvault"
-SECRETS_GIT_FOLDER = ".secrets"
+VAULT_GIT_FOLDER = ".xvault"
 FILE_EXTENSION = ".xvault"
 ENC_PREFIX = "enc:"
 CHECK_VALUE = "xvault"
-CONFIG_FILE = ".xvault"
+CONFIG_FILE = ".xvault/config"
 
 # class
 class XVault():
@@ -53,7 +53,7 @@ class XVault():
             self._store.meta.check = self._encrypt_value(CHECK_VALUE)
             # validation
             if password == None:
-                raise ValueError("Password is required to create a new secrets db")            
+                raise ValueError("Password is required to create a new vault")            
             # save
             self._save()
             # unlock
@@ -171,10 +171,10 @@ class XVault():
         # info
         info = {
             "Project": self._git_project,
-            "Store name": self._name,
+            "Vault name": self._name,
             "Config path": self._path_config,
             "Path": self._path,
-            "Status": f"locked (run 'xsecrets unlock {self._name}')" if self.is_locked() else "unlocked (cached in keyring)",
+            "Status": f"locked (run 'xvault unlock {self._name}')" if self.is_locked() else "unlocked (cached in keyring)",
             "Secrets count": len(self._store.secrets),
             "Schema version": self._store.meta.schema_version,
             "Crypto version": self._store.meta.crypto_version,
@@ -245,8 +245,8 @@ class XVault():
     
     @staticmethod
     def is_locked_db(dbname: str) -> bool:
-        secrets = XVault(dbname)
-        return secrets.is_locked()
+        xvault = XVault(dbname)
+        return xvault.is_locked()
     
 
     # read/write utils
@@ -276,9 +276,10 @@ class XVault():
     def _get_store_path(dbname: str) -> Path:
         # get path for dbname, based on git repo or current folder
         git_path = XVault._get_git_folder_path()
-        file = git_path / SECRETS_GIT_FOLDER / (dbname + FILE_EXTENSION)
-        # check if exists .xsecrets
+        file = git_path / VAULT_GIT_FOLDER / (dbname + FILE_EXTENSION)
+        # check if exists .xvault/config file in git repo, if exists use it as config
         git_config_file = git_path / CONFIG_FILE
+        
         if git_config_file.exists() and git_config_file.is_file():
             config = dotenv_values(git_config_file)
             if "file" in config:
@@ -289,7 +290,7 @@ class XVault():
                 return (file, git_config_file, git_path.stem)
         else:
             git_config_file = None
-        # use {project}/.secrets
+        # use {project}/.xvault/{name}.xvault as default path
         file.parent.mkdir(parents=True, exist_ok=True)
         return (file, git_config_file, git_path.stem)
     

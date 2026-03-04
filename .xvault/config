@@ -1,2 +1,2 @@
 # file pattern to use for secrets storage (in this case secrets will be stored encripted in an external private repository)
-file = ../dev/secrets/{project}-{name}.xvault
+file = ../dev/.xvault/{project}-{name}.xvault

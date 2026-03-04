@@ -40,7 +40,6 @@ XVault is optimized for **solo developers and small teams** who want a **local-f
 
 Many developers store secrets in `.env` files or private folders.
 These files are frequently committed accidentally to Git repositories.
-
 Tools such as **Hashicorp Vault** or **Mozilla SOPS** solve this problem
 for infrastructure environments, but they often require external
 key management systems.
@@ -48,15 +47,6 @@ key management systems.
 XVault was created to provide a **lightweight developer-focused vault**
 that works locally, integrates with Git workflows, and requires no
 external infrastructure.
-
-Developers often need to store:
-
-- API tokens
-- credentials
-- environment variables
-- configuration files
-- private keys
-- sensitive documents
 
 XVault focuses on a **different niche** than most secret-management tools:
 
@@ -109,6 +99,10 @@ API_KEY=12345678
 
 ```
 
+XVault includes an interactive editor (similar to SOPS) that decrypts values in-memory, opens an editor view, and re-encrypts on save.
+
+![XVault integrated editor demo](docs/readme-demo.gif)
+
 ### Design Philosophy
 
 - **SOPS** integrates deeply with cloud infrastructure and centralized key management systems.
@@ -132,6 +126,7 @@ This makes XVault particularly well-suited for:
 - Multiple vault stores per project
 - Flexible vault location configuration
 - Designed for automation and developer workflows
+- Integrated interactive editor (SOPS-style) to edit vault contents safely
 
 ---
 
@@ -353,7 +348,7 @@ Formats supported:
 
 ## Vault Unlocking
 
-XVault can cache vault keys securely using the system keyring.
+XVault caches vault keys securely using the system keyring.
 
 Unlock a store:
 
