@@ -2,11 +2,13 @@ from pprint import pformat
 import cryptography
 from pwinput import pwinput
 import sys
+import os
 import json
 from dotenv import dotenv_values
 import secrets as secrets_module
 from typing import Annotated
 from .xvault import XVault
+from .xvaultstore import XVaultStore 
 from dprojectstools.commands import command, Argument, Flag, CommandsManager
 from dprojectstools.utils.env import format_env_line
 from importlib.metadata import version, PackageNotFoundError
@@ -24,8 +26,11 @@ def error(message: str) -> None:
     RESET = "\033[0m"
     print(f"{RED}{message}{RESET}", file=sys.stderr, flush=True)
 
-def ask_password(confirm: bool = False, min_length: int = 8) -> str:
-    result = pwinput("Enter password: ", mask="*")
+def ask_password(confirm: bool = False, min_length: int = 8, message: str = "Enter password") -> str:
+    if not sys.stdin.isatty():
+        error("Password is required but cannot be entered in non-interactive mode.")
+        exit(-1)
+    result = pwinput(message + ": ", mask="*")
     if confirm:
         if len(result) < min_length:
             error(f"Password must be at least {min_length} characters long.")
@@ -37,27 +42,266 @@ def ask_password(confirm: bool = False, min_length: int = 8) -> str:
     return result
 
 
+# edit
+@command("Edit file", examples=[
+    "xvault edit ./dev.json",
+    "xvault edit ./dev.yaml",
+    "xvault edit ./dev.env",
+])
+def edit(
+        path: Annotated[str,  Argument("PATH")],
+        key: Annotated[str,  Argument("KEY")] = ""
+    ):
+    # validate
+    if not os.path.exists(path):
+        error(f"File '{path}' not found.")
+        return -1
+    # ask for password if interactive and not provided
+    password = None
+    if XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
+        password = ask_password()
+    # create instance
+    xvault = XVault(path, password = password)
+    # action
+    if key:
+        xvault.edit_secret(key)
+    else:
+        xvault.edit()
+
+
+
+# show
+@command("Get value from file", examples=[
+    "xvault get ./dev.json VAR1",
+    "xvault get ./dev.yaml DB.VAR2",
+])
+def get(
+        path: Annotated[str,  Argument("PATH")],
+        key: Annotated[str,  Argument("KEY")]
+    ):
+    # validate
+    if not os.path.exists(path):
+        error(f"File '{path}' not found.")
+        return -1
+    # ask for password if interactive and not provided
+    password = None
+    if XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
+        password = ask_password()
+    # create instance
+    xvault = XVault(path, password = password)
+    # action
+    value = xvault.get(key)
+    # print
+    print(value)
+
+
+# version
+@command("Show xvault version", alias=["version"], examples=[
+    "xvault version"
+])
+def versioncmd(
+    ):
+    print(f"xvault {get_app_version()}")
+
+
+# unlock
+@command("Unlock file", examples=[
+    "xvault unlock ./dev.json"
+])
+def unlock(
+        path: Annotated[str,  Argument("PATH")]
+    ):
+    # validate
+    if not os.path.exists(path):
+        error(f"File '{path}' not found.")
+        return -1
+    if not XVault.is_locked_file(path):
+        error(f"File '{path}' is not locked.")
+        return -1
+    # ask for password if interactive and not provided
+    password = ask_password()
+    # create instance 
+    xvault = XVault(path, password = password)
+    # action
+    xvault.unlock()
+    # log
+    print(f"File '{path}' unlocked.")
+
+# lock
+@command("Lock file", examples=[
+    "xvault lock ./dev.json"
+])
+def lock(
+        path: Annotated[str,  Argument("PATH")]
+    ):
+    # validation
+    if not os.path.exists(path):
+        error(f"File '{path}' not found.")
+        return -1
+    if XVault.is_uninitialized_file(path):
+        error(f"File '{path}' is not initialized.")
+        return -1
+    if XVault.is_locked_file(path):
+        error(f"File '{path}' is already locked.")
+        return -1    
+    # create instance 
+    xvault = XVault(path)
+    # action
+    xvault.lock()
+    # log
+    print(f"File '{path}' locked.")
+
+# export
+@command("Export file", examples=[
+    "xvault export ./dev.json",
+])
+def export(
+        path: Annotated[str,  Argument("PATH")]
+    ):
+    # export
+    if not os.path.exists(path):
+        error(f"File '{path}' not found.")
+        return -1
+    # ask for password if interactive and not provided
+    password = None
+    if XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
+        password = ask_password()
+    # create instance
+    xvault = XVault(path, password = password)
+    # action
+    print(xvault.export())
+    
+
+# info
+@command("Show file info", examples=[
+    "xvault info dev.json"
+])
+def info(
+        path: Annotated[str,  Argument("PATH")]
+    ):
+    # validate
+    if not os.path.exists(path):
+        error(f"File '{path}' not found.")
+        return -1
+    # create instance 
+    xvault = XVault(path)
+    # action
+    info = xvault.info()
+    # print
+    width = max(len(k) for k in info.keys())
+    print(f"File info:")
+    print("-" * (width + 2))
+    for k, v in info.items():
+        print(f"{k:<{width}} : {v}")
+
+# rekey
+@command("Rekey file", examples=[
+    "xvault rekey ./dev.json",
+])
+def rekey(
+        path: Annotated[str,  Argument("PATH")]
+    ):
+    # export
+    if not os.path.exists(path):
+        error(f"File '{path}' not found.")
+        return -1
+    # ask for password if interactive and not provided
+    password = None
+    if XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
+        password = ask_password()
+    #
+    new_password = ask_password(message = "New password", confirm=True)
+    # create instance
+    xvault = XVault(path, password = password)
+    # action
+    xvault.rekey(new_password)
+    
+
+# validate
+@command("Validate file", examples=[
+    "xvault validate ./dev.json",
+])
+def validate(
+        path: Annotated[str,  Argument("PATH")],
+        verbose: Annotated[bool, Flag('v', "verbose")] = False
+    ):
+    # export
+    if not os.path.exists(path):
+        error(f"File '{path}' not found.")
+        return -1
+    # ask for password if interactive and not provided
+    password = None
+    if XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
+        password = ask_password()
+    # action
+    try:
+        xvault = XVault(path, password = password)
+        result = xvault.validate()
+    except Exception as e:
+        result = {
+            "checks":[
+                {"name": "load", "severity": "error", "message": f"error: {str(e)}"}
+            ],
+            "status": "error"
+        }
+        error(f"Error: {str(e)}")
+        return -1
+    # action    
+    width = max(len(check["name"]) for check in result["checks"]) if result["checks"] else 0
+    for check in result["checks"]:
+        print(f"- {check['name']:<{width}} : {check['message']}")
+    print("Status: " + result["status"])
+
+# TODO
+# x env format
+# x when edit: only reencrypt changed values
+# x validate command
+# x remove v1:
+# x create scafolding for md, xml, yaml
+
+# md format
+# yaml format
+# xml format
+
+# xeditor: colorize
+
+# show
+# set
+
+
+# replace inner variables format
+
+
+
+
+
+
+
+
+
+
+
 # main
-@command("Create secrets db", examples=[
+@command("Create xvault db", examples=[
     "xvault create dev",
     "xvault create dev --force"
 ])
-def create(
+def store_create(
         dbname: Annotated[str,  Argument("NAME")],
         force: Annotated[bool,  Flag('f', "force")] = False
     ):
     # validation
-    if XVault.exists_db(dbname):
+    if XVaultStore.exists_db(dbname):
         if not force:
             confirm = input(f"Secrets db '{dbname}' already exists. Do you want to overwrite it? [y/n] ")
             if confirm.strip().lower() not in ("y", "yes"):
                 error("Aborting creation.")
                 return -1
-        XVault.delete_db(dbname)
+        XVaultStore.delete_db(dbname)
     # ask for password 
     password = ask_password(confirm=True) 
     # create instance (will create empty store if not exists)
-    xvault = XVault(dbname, password = password, create = True)    
+    xvault = XVaultStore(dbname, password = password, create = True)    
     # print
     info = xvault.info()
     print(f"Store created: {dbname}")
@@ -65,16 +309,16 @@ def create(
     print(f"Status: {'locked' if xvault.is_locked() else 'unlocked'}")
 
 
-@command("List secrets dbs", alias=["list"], examples=[
+@command("List secrets dbs", alias=["store","list"], examples=[
     "xvault list",
     "xvault list dev"
 ])
-def listcmd(
+def store_listcmd(
     dbname: Annotated[str,  Argument("NAME")] = None
     ):
     if dbname:
-        if XVault.exists_db(dbname):
-            xvault = XVault(dbname)
+        if XVaultStore.exists_db(dbname):
+            xvault = XVaultStore(dbname)
             keys = xvault.keys()
             width = max(len(key) for key in keys) if keys else 0
             for key in keys:
@@ -83,11 +327,11 @@ def listcmd(
         else:
             error(f"Secrets db '{dbname}' not found.")
     else:
-        db_names = XVault.get_db_names()
+        db_names = XVaultStore.get_db_names()
         width = max(len(db_name) for db_name in db_names) if db_names else 0
         for db_name in db_names:
             
-            xvault = XVault(db_name)
+            xvault = XVaultStore(db_name)
             keys_count = len(xvault.keys())
             locked = xvault.is_locked()
             print(f"{db_name:<{width}}   {keys_count} {'key ' if keys_count == 1 else 'keys'}  {'locked' if locked else 'unlocked'}")
@@ -97,19 +341,19 @@ def listcmd(
     "xvault edit",
     "xvault edit dev"
 ])
-def edit(
+def store_edit(
         dbname: Annotated[str,  Argument("NAME")],
         key: Annotated[str,  Argument("KEY")] = ""
     ):
-    if not XVault.exists_db(dbname):
+    if not XVaultStore.exists_db(dbname):
         error(f"Secrets db '{dbname}' not found.")
         return -1
     # ask for password if interactive and not provided
     password = None
-    if XVault.is_locked_db(dbname):
+    if XVaultStore.is_locked_db(dbname):
         password = ask_password()
     # create instance
-    secrets = XVault(dbname, password = password)
+    secrets = XVaultStore(dbname, password = password)
     # action
     if key:
         secrets.edit_secret(key)
@@ -120,19 +364,19 @@ def edit(
 @command("Get secret value from db", examples=[
     "xvault get dev mysecret"
 ])
-def get(
+def store_get(
         dbname: Annotated[str,  Argument("NAME")],
         key: Annotated[str,  Argument("KEY")]
     ):
-    if not XVault.exists_db(dbname):
+    if not XVaultStore.exists_db(dbname):
         error(f"Secrets db '{dbname}' not found.")
         return -1
     # ask for password if interactive and not provided
     password = None
-    if XVault.is_locked_db(dbname):
+    if XVaultStore.is_locked_db(dbname):
         password = ask_password()
     # create instance
-    xvault = XVault(dbname, password = password)
+    xvault = XVaultStore(dbname, password = password)
     # action
     if xvault.exists(key):
         value = xvault.getValue(key)
@@ -150,7 +394,7 @@ def get(
     "xvault set dev mysecret {\"username\": \"user1\", \"password\": \"pass123\"} --type object",
     "echo myvalue | xvault set dev mysecret"
 ])
-def set(
+def store_set(
         dbname: Annotated[str,  Argument("NAME")],
         key: Annotated[str,  Argument("KEY")],
         value: Annotated[str,  Argument("VALUE")] = None,
@@ -163,7 +407,7 @@ def set(
         force: Annotated[bool,  Flag('f', "force")] = False
     ):
     # validation
-    if not XVault.exists_db(dbname):
+    if not XVaultStore.exists_db(dbname):
         error(f"Secrets db '{dbname}' not found.")
         return -1
     if value and generate:        
@@ -191,10 +435,10 @@ def set(
             return -1
     # ask for password if interactive and not provided
     password = None
-    if XVault.is_locked_db(dbname):
+    if XVaultStore.is_locked_db(dbname):
         password = ask_password()
     # init store
-    secrets = XVault(dbname, password = password)
+    secrets = XVaultStore(dbname, password = password)
     # check if exists, will raise if not
     exists = secrets.exists(key)
     if exists and not force:
@@ -223,20 +467,20 @@ def set(
     "xvault remove dev mysecret",
     "xvault remove dev mysecret --force"
 ])
-def remove(
+def store_remove(
         dbname: Annotated[str,  Argument("NAME")],
         key: Annotated[str,  Argument("KEY")],  
         force: Annotated[bool,  Flag('f', "force")] = False
     ):
-    if not XVault.exists_db(dbname):
+    if not XVaultStore.exists_db(dbname):
         error(f"Secrets db '{dbname}' not found.")
         return -1
     # ask for password if interactive and not provided
     password = None
-    if XVault.is_locked_db(dbname):
+    if XVaultStore.is_locked_db(dbname):
         password = ask_password()
     # create instance
-    secrets = XVault(dbname)
+    secrets = XVaultStore(dbname)
     # validate
     if not secrets.exists(key):
         error(f"Secret '{key}' not found.")
@@ -256,15 +500,15 @@ def remove(
     "xvault delete dev",
     "xvault delete dev --force"
 ])
-def delete(
+def store_delete(
         dbname: Annotated[str,  Argument("NAME")],
         force: Annotated[bool,  Flag('f', "force")] = False
     ):
-    if not XVault.exists_db(dbname):
+    if not XVaultStore.exists_db(dbname):
         error(f"Secrets db '{dbname}' not found.")
         return -1
     # create instance 
-    xvault = XVault(dbname)
+    xvault = XVaultStore(dbname)
     # confirm
     if not force:
         confirm = input(f"Are you sure you want to delete the secrets db '{dbname}'? [y/n] ")
@@ -280,20 +524,20 @@ def delete(
 @command("Unlock secrets db", examples=[
     "xvault unlock dev"
 ])
-def unlock(
+def store_unlock(
         dbname: Annotated[str,  Argument("NAME")]
     ):
     # validation
-    if not XVault.exists_db(dbname):
+    if not XVaultStore.exists_db(dbname):
         error(f"Secrets db '{dbname}' not found.")
         return -1
-    if not XVault.is_locked_db(dbname):
+    if not XVaultStore.is_locked_db(dbname):
         error(f"Secrets db '{dbname}' is not locked.")
         return -1
     # ask for password if interactive and not provided
     password = ask_password()
     # create instance 
-    xvault = XVault(dbname, password = password)
+    xvault = XVaultStore(dbname, password = password)
     # action
     xvault.unlock()
     # log
@@ -303,18 +547,18 @@ def unlock(
 @command("Lock secrets db", examples=[
     "xvault lock dev"
 ])
-def lock(
+def store_lock(
         dbname: Annotated[str,  Argument("NAME")]
     ):
     # validation
-    if not XVault.exists_db(dbname):
+    if not XVaultStore.exists_db(dbname):
         error(f"Secrets db '{dbname}' not found.")
         return -1
-    if XVault.is_locked_db(dbname):
+    if XVaultStore.is_locked_db(dbname):
         error(f"Secrets db '{dbname}' is already locked.")
         return -1    
     # create instance 
-    xvault = XVault(dbname)
+    xvault = XVaultStore(dbname)
     # action
     xvault.lock()
     # log
@@ -324,14 +568,14 @@ def lock(
 @command("Show secrets db info", examples=[
     "xvault info dev"
 ])
-def info(
+def store_info(
         dbname: Annotated[str,  Argument("NAME")]
     ):
-    if not XVault.exists_db(dbname):
+    if not XVaultStore.exists_db(dbname):
         error(f"Secrets db '{dbname}' not found.")
         return -1
     # create instance 
-    xvault = XVault(dbname)
+    xvault = XVaultStore(dbname)
     # action
     info = xvault.info()
     # print
@@ -348,19 +592,19 @@ def info(
     "xvault export dev --format json",
     "xvault export dev --format xvault"
 ])
-def export(
+def store_export(
         dbname: Annotated[str,  Argument("NAME")],
         format: Annotated[str,  Flag(' ', "format")] = "env"
     ):
-    if not XVault.exists_db(dbname):
+    if not XVaultStore.exists_db(dbname):
         error(f"Secrets db '{dbname}' not found.")
         return -1
     # ask for password if interactive and not provided
     password = None
-    if XVault.is_locked_db(dbname):
+    if XVaultStore.is_locked_db(dbname):
         password = ask_password()
     # create instance
-    xvault = XVault(dbname, password = password)
+    xvault = XVaultStore(dbname, password = password)
     # action
     if format == "json":
         # .json
@@ -383,11 +627,11 @@ def export(
         return -1
 
 
-@command("Import secrets into db", alias=["import"], examples=[
+@command("Import secrets into db", alias=["store","import"], examples=[
     "xvault import dev ./secrets-key-value.json",
     "xvault import dev ./secrets-key-value.env --force"
 ])
-def imports(
+def store_imports(
         dbname: Annotated[str,  Argument("NAME")],
         filename: Annotated[str,  Argument("FILE")],
         force: Annotated[bool, Flag('f', "force")] = False,
@@ -396,15 +640,15 @@ def imports(
 
     ):
     # validation
-    if not XVault.exists_db(dbname):
+    if not XVaultStore.exists_db(dbname):
         error(f"Secrets db '{dbname}' not found.")
         return -1
     # ask for password if interactive and not provided
     password = None
-    if XVault.is_locked_db(dbname):
+    if XVaultStore.is_locked_db(dbname):
         password = ask_password()
     # create instance
-    xvault = XVault(dbname, password = password)
+    xvault = XVaultStore(dbname, password = password)
     # auto detect format based on file extension
     if format == "auto":
         if filename.endswith(".json"):
@@ -482,7 +726,7 @@ def imports(
         # .xvault (internal format)
         with open(filename, "r") as f:
             text = f.read()
-            tmp = XVault.from_json(text)
+            tmp = XVaultStore.from_json(text)
             print(f"Importing {len(tmp.secrets.items())} secrets into '{dbname}' ...")
             if verbose:
                 print()
@@ -514,12 +758,6 @@ def imports(
     print(f"Done. {new_count} new, {updated_count} updated, {untouched_count} untouched, {skipped_count} skipped..")
 
 
-@command("Print version", alias=["version"], examples=[
-    "xvault version"
-])
-def versioncmd(
-    ):
-    print(f"xvault {get_app_version()}")
 
 
 # main

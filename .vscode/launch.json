@@ -6,8 +6,7 @@
             "type": "debugpy",
             "request": "launch",
             "module": "xvault",
-            "console": "integratedTerminal",
-            "args": ["list","default"]
+            "args": ["export","tests/default.jsonc"] 
         }
     ]
 }

@@ -24,8 +24,8 @@ import shutil
 # pip install -e .
 # # manually add to the path c:\users\myuser\appdata\local\programs\python\python3....\...\scripts
 
-# xvault
-xvault = XVault("default")
+# xvault (use secrets from a private repository)
+xvault = XVault("../dev/.secrets/pypi.env")
 
 # controllers
 @command("Package build", index = 10)
@@ -33,6 +33,7 @@ def package_build():
     if os.path.exists("./dist"):
         shutil.rmtree("./dist")
     subprocess.run("py -m build")
+    
 
 @command("Package build and publish")
 def package_publish():
@@ -40,13 +41,14 @@ def package_publish():
     package_build()
     # publish
     myenv = os.environ.copy()
-    myenv["TWINE_PASSWORD"] = xvault.getValue("PYPI_AUTH_TOKEN")
+    myenv["TWINE_PASSWORD"] = xvault.get("PYPI_AUTH_TOKEN")
     subprocess.run("py -m twine upload dist/*", env = myenv)
 
 @command("Package install as development package", index = 15)
 def package_install():
     # install
     subprocess.run("pip install -e .") 
+
 
 # execute
 commandsManager = CommandsManager()

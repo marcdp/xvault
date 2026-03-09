@@ -1,2 +1,0 @@
-# file pattern to use for vault storage (in this case vault will be stored in an external private git repository)
-file = ../dev/.xvault/{project}-{name}.xvault

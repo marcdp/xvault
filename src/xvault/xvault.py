@@ -1,242 +1,362 @@
+from ast import pattern
 import base64
 import json
+import json5
 from dotenv import dotenv_values
 from hashlib import sha256
 from pathlib import Path
 import os
 import copy
+import yaml
 import re
 from unittest import result
 from argon2.low_level import hash_secret_raw, Type
 from typing import Optional
 import keyring
 from dprojectstools.xeditor import XEditor
+from sqlalchemy import text
 from .model import SecretEntry, SecretsMeta, SecretsStore
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from abc import ABC, abstractmethod
 
 
 # consts
-KEYRING_APP = "xvault"
-VAULT_GIT_FOLDER = ".xvault"
-FILE_EXTENSION = ".xvault"
-ENC_PREFIX = "enc:"
-CHECK_VALUE = "xvault"
-CONFIG_FILE = ".xvault/config"
+META_VARIABLE = "_xvault"  # variable name in JSON/YAML/ENV for storing meta info
+META_VARIABLE_PREFIX = "xvault:"  # prefix for the value of META_VARIABLE, followed by base64-encoded meta JSON, e.g. "xvault:eyJjcnlwdG9fdmVyc2lvbiI6IDEsICJzYWx0IjogIjIxYWYyY2ExZGViMmRhZDgxYTAwZGJiNGQ2MDcwMWYzIiwgImNoZWNrIjogImVuYzp2MTovRUF3R0RRWHdVcXJNRUlFN1dMdFV3dEowMnpHWlczQkpMTS9BeGJBd3YvOSt3PT0ifQ=="
+META_VARIABLE_COMMENTS = "xvault meta variable (do not modify)"
+META_CHECK_VALUE = "xvault"  # known value used to validate password by trying to decrypt it, stored in "_xvault.check"
+
+KEYRING_APP_NAME = "xvault"  # keyring app name for storing unlocked keys
+ENC_PREFIX = "enc:"     # prefix used to identify encrypted values in the store, followed by version info, e.g. "enc:...."
+
+
+# handlers
+class HandlerBase:
+    @abstractmethod
+    def parse(self, text: str) -> tuple[XVaultMeta, str]:
+        pass
+class HandlerJson(HandlerBase):
+    def parse(self, text: str) -> tuple[XVaultMeta, str]:
+        # extract meta
+        _xvault_match = re.search(r'"' + META_VARIABLE + r'"\s*:\s*"([^"]+)"', text)
+        _xvault_value = _xvault_match.group(1) if _xvault_match else None
+        if _xvault_value is None:
+            # default meta
+            meta = XVaultMeta(schema_version = 1, crypto_version  = 1, salt = None, check = None)
+        else:
+            # constants
+            indent = " " * self.detect_json_indentation(text)
+            # decode meta
+            if _xvault_value.startswith(META_VARIABLE_PREFIX):
+                decoded = base64.urlsafe_b64decode(_xvault_value[len(META_VARIABLE_PREFIX):])
+                meta_json = decoded.decode()
+                meta_dict = json.loads(meta_json)
+                meta = XVaultMeta.from_dict(schema_version=1, data= meta_dict)
+            else:
+                raise ValueError("Unable to load vault meta: invalid _xvault format")
+            # remove meta variable from text
+            text = re.sub(r'"' + META_VARIABLE + r'"\s*:\s*"([^"]+)"\s*,?', '', text, count=1)
+            # remove meta comments if exists
+            text = text.replace(f"// {META_VARIABLE_COMMENTS}\n", "")
+            # remove leading empty lines if exists
+            text = f"{{\n{indent}\n{indent}" + text.lstrip("{").lstrip()    
+        # return
+        return (meta, text)
+    def replace_enc_tokens(self, text: str, replacer):
+        pattern = r'' + ENC_PREFIX + '[^"\r\n]+'
+        return re.sub(pattern, lambda m: replacer(m.group(0)), text)
+    def detect_json_indentation(self, text: str) -> int | None:
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            spaces = len(line) - len(line.lstrip(" "))
+            if spaces > 0:
+                return spaces
+        return 2  # default indentation
+    def stringify(self, meta: XVaultMeta, text: str) -> str:
+        # encode
+        _xvault = base64.urlsafe_b64encode(json.dumps(meta.to_dict()).encode()).decode()
+        indent = " " * self.detect_json_indentation(text)
+        result = "{\n"
+        result += f"{indent}\"{META_VARIABLE}\": \"{META_VARIABLE_PREFIX}{_xvault}\""
+        if '"' in text:
+            result += ","
+        result += f"\n{indent}"
+        result += f"\n{indent}"
+        result += text.lstrip('{').strip()
+        return result
+    def getValue(self, text: str, path: str) -> Optional[str]:
+        # pattern to match lines like: SECRET
+        data = json5.loads(text)
+        value = data
+        for key in path.split("."):
+            if not isinstance(value, dict) or key not in value:
+                return None
+            value = value[key]
+        return value
+class HandlerJsonc(HandlerJson):
+    def stringify(self, meta: XVaultMeta, text: str) -> str:
+        # encode
+        _xvault = base64.urlsafe_b64encode(json.dumps(meta.to_dict()).encode()).decode()
+        indent = " " * self.detect_json_indentation(text)
+        result = "{\n"
+        result += f"{indent}// {META_VARIABLE_COMMENTS}\n"
+        result += f"{indent}\"{META_VARIABLE}\": \"{META_VARIABLE_PREFIX}{_xvault}\""
+        if '"' in text:
+            result += ","
+        result += f"\n{indent}"
+        result += f"\n{indent}"
+        result += text.lstrip('{').strip()
+        return result
+    def getValue(self, text: str, path: str) -> Optional[str]:
+        # pattern to match lines like: SECRET
+        data = json5.loads(text)
+        value = data
+        for key in path.split("."):
+            if not isinstance(value, dict) or key not in value:
+                return None
+            value = value[key]
+        return value
+
+class HandlerEnv(HandlerBase):
+    def parse(self, text: str) -> tuple[XVaultMeta, str]:
+        _xvault_match = re.search(r'^' + META_VARIABLE + r'\s*=\s*(.+)$', text, re.MULTILINE)
+        _xvault_value = _xvault_match.group(1) if _xvault_match else None
+        if _xvault_value is None:
+            # default meta
+            meta = XVaultMeta(schema_version = 1, crypto_version  = 1, salt = None, check = None)
+        elif _xvault_value.startswith(META_VARIABLE_PREFIX):
+            # decode meta
+            decoded = base64.urlsafe_b64decode(_xvault_value[len(META_VARIABLE_PREFIX):])
+            meta_json = decoded.decode()
+            meta_dict = json.loads(meta_json)
+            meta = XVaultMeta.from_dict(schema_version=1, data= meta_dict)
+            # replace meta variable with empty line in text
+            text = text.replace(f"# {META_VARIABLE_COMMENTS}\n", "")
+            text = re.sub(r'^' + META_VARIABLE + r'\s*=\s*.+$', "", text, count=1, flags=re.MULTILINE)    
+            text = text.lstrip("\n")  # remove leading empty lines if exists
+        else:
+            raise ValueError("Unable to load vault meta: invalid _xvault format")
+        # return
+        return (meta, text)
+    def replace_enc_tokens(self, text: str, replacer):
+        # pattern to match lines like: SECRET_KEY=enc:.... (value starts with enc: and continues until end of line or comment)
+        pattern = r'' + ENC_PREFIX + '[^\r\n#"\']+'
+        return re.sub(pattern, lambda m: replacer(m.group(0)), text)
+    def stringify(self, meta: XVaultMeta, text: str) -> str:
+        # encode
+        _xvault = base64.urlsafe_b64encode(json.dumps(meta.to_dict()).encode()).decode()
+        result = f"# {META_VARIABLE_COMMENTS}\n"
+        result += f"{META_VARIABLE}={META_VARIABLE_PREFIX}{_xvault}\n"
+        result += "\n"
+        result += text
+        return result
+    def getValue(self, text: str, name: str) -> Optional[str]:
+        # pattern to match lines like: SECRET
+        pattern = r'^' + re.escape(name) + r'\s*=\s*([^\r\n#]+)'
+        match = re.search(pattern, text, re.MULTILINE)
+        if match:
+            return match.group(1).strip()
+        return None
+
+class HandlerYaml(HandlerBase):
+    def parse(self, text: str) -> tuple[XVaultMeta, str]:
+        # extract meta from YAML (_xvault: enc:....\n")
+        _xvault_match = re.search(r'' + META_VARIABLE + r'\s*:\s*([^"\r\n]+)', text)
+        _xvault_value = _xvault_match.group(1) if _xvault_match else None
+        if _xvault_value is None:
+            # default meta
+            meta = XVaultMeta(schema_version = 1, crypto_version  = 1, salt = None, check = None)
+        else:
+            # decode meta
+            if _xvault_value.startswith(META_VARIABLE_PREFIX):
+                decoded = base64.urlsafe_b64decode(_xvault_value[len(META_VARIABLE_PREFIX):])
+                meta_json = decoded.decode()
+                meta_dict = json.loads(meta_json)
+                meta = XVaultMeta.from_dict(schema_version=1, data= meta_dict)
+            else:
+                raise ValueError("Unable to load vault meta: invalid _xvault format")
+            # remove meta variable from text
+            text = re.sub(r'' + META_VARIABLE + r'\s*:\s*([^"\r\n]+)', '', text, count=1)
+            # remove meta comments if exists
+            text = text.replace(f"# {META_VARIABLE_COMMENTS}\n", "")
+            # remove leading empty lines if exists
+            text = text.lstrip()
+        # return
+        return (meta, text)
+    def replace_enc_tokens(self, text: str, replacer):
+        # pattern enc:....
+        pattern = r'' + ENC_PREFIX + '[^"\r\n]+'
+        return re.sub(pattern, lambda m: replacer(m.group(0)), text)
+    def stringify(self, meta: XVaultMeta, text: str) -> str:
+        # encode
+        _xvault = base64.urlsafe_b64encode(json.dumps(meta.to_dict()).encode()).decode()
+        result = f"# {META_VARIABLE_COMMENTS}\n{META_VARIABLE}: {META_VARIABLE_PREFIX}{_xvault}\n\n" + text
+        return result
+    def getValue(self, text: str, path: str) -> Optional[str]:
+        # pattern to match lines like: SECRET
+        data = yaml.safe_load(text)
+        value = data
+        for key in path.split("."):
+            if not isinstance(value, dict) or key not in value:
+                return None
+            value = value[key]
+        return value
+    
+class HandlerMd(HandlerBase):
+    def parse(self, text: str) -> tuple[XVaultMeta, str]:
+        # extract meta from Markdown (---\n_xvault: enc:....\n---\n")
+        front_matter_match = m = re.match(r'^---\r?\n(.*?)\r?\n---\r?\n?', text, re.DOTALL)
+        front_matter_value = front_matter_match.group(1) if m else None
+        _xvault_value = None
+        if front_matter_value:
+            # decode xvault meta from front matter
+            _xvault_match = re.search(r'' + META_VARIABLE + r'\s*:\s*([^"\r\n]+)', front_matter_value)
+            _xvault_value = _xvault_match.group(1) if _xvault_match else None
+            # extract meta from front matter
+            text = text[front_matter_match.end():]  # remove front matter from text
+            text = text.lstrip()  # remove leading empty lines if exists
+        if _xvault_value is None:
+            # default meta
+            meta = XVaultMeta(schema_version = 1, crypto_version  = 1, salt = None, check = None)
+        else:
+            # decode meta
+            if _xvault_value.startswith(META_VARIABLE_PREFIX):
+                decoded = base64.urlsafe_b64decode(_xvault_value[len(META_VARIABLE_PREFIX):])
+                meta_json = decoded.decode()
+                meta_dict = json.loads(meta_json)
+                meta = XVaultMeta.from_dict(schema_version=1, data= meta_dict)
+            else:
+                raise ValueError("Unable to load vault meta: invalid _xvault format")
+            # remove leading empty lines if exists
+            text = text.lstrip()
+        # return
+        return (meta, text)
+    def replace_enc_tokens(self, text: str, replacer):
+        # pattern enc:....
+        pattern = r'' + ENC_PREFIX + '[^"\r\n]+'
+        return re.sub(pattern, lambda m: replacer(m.group(0)), text)
+    def stringify(self, meta: XVaultMeta, text: str) -> str:
+        # encode
+        _xvault = base64.urlsafe_b64encode(json.dumps(meta.to_dict()).encode()).decode()
+        result = f"---\n"
+        result += f"# {META_VARIABLE_COMMENTS}\n"
+        result += f"{META_VARIABLE}: {META_VARIABLE_PREFIX}{_xvault}\n"
+        result += f"---\n\n"
+        result += text
+        return result
+    def getValue(self, text: str, path: str) -> Optional[str]:
+        # pattern to match lines like: SECRET
+        raise NotImplementedError("getValue is not implemented for Markdown format")
+    
+class HandlerXml(HandlerBase):
+    pass
+
+
+
+
+# XVault meta
+class XVaultMeta():
+    def __init__(self, schema_version: int, crypto_version: int, salt: str, check: Optional[str]):
+        self.schema_version = schema_version
+        self.crypto_version = crypto_version
+        self.salt = salt
+        self.check = check
+    def to_dict(self):
+        return {
+            "crypto_version": self.crypto_version,
+            "salt": self.salt,
+            "check": self.check
+        }
+    def from_dict(schema_version:int, data: dict):
+        return XVaultMeta(
+            schema_version,
+            crypto_version = data.get("crypto_version", 1),
+            salt = data.get("salt"),
+            check = data.get("check")
+        )   
+
 
 # class
 class XVault():
 
+
     # ctr
-    def __init__(self, dbname, password = None, create = False):
+    def __init__(self, path : str, password : Optional[str] = None):
         # get path
-        self._name = dbname
-        (self._path, self._path_config, self._git_project) = XVault._get_store_path(dbname)
+        self._path = Path(path)
         # validate
-        if os.path.exists(self._path):
-            if create:
-                raise ValueError(f"Unable to create db: already exists: {dbname}")
-        else:
-            if not create:
-                raise ValueError(f"Unable to open db: db not found: {dbname}")
+        if not self._path.exists():
+            raise ValueError(f"Unable to open: path not found: {path}")
         # password
         self._password = password
         # key
         self._key = None
-        # save if required
-        if create:
-            # new store
-            self._store = SecretsStore(
-                name = self._path.stem,
-                meta = SecretsMeta(
-                    salt = os.urandom(16).hex()
-                )
-            )
-            self._store.meta.check = self._encrypt_value(CHECK_VALUE)
-            # validation
-            if password == None:
-                raise ValueError("Password is required to create a new vault")            
-            # save
-            self._save()
-            # unlock
-            self.unlock()
+        # load
+        self._text = None
+        self._meta = None
+        self._cache = {}
+        if path.endswith(".json"):
+            self._handler = HandlerJson()
+        elif path.endswith(".jsonc"):
+            self._handler = HandlerJsonc()
+        elif path.endswith(".env"):
+             self._handler = HandlerEnv()
+        elif path.endswith(".yml") or path.endswith(".yaml"):
+             self._handler = HandlerYaml()
+        elif path.endswith(".md"):
+             self._handler = HandlerMd()
+        elif path.endswith(".xml"):
+             self._handler = HandlerXml()
         else:
-            # load
-            self._load()
+            raise ValueError(f"Unable to open: unsupported file format: only .json, .jsonc, .env, .yml, .yaml, .md, .xml are supported: {path}")
+        self._handler
+        self._load()
+        # auto unlock
+        if self._password:
+            self.unlock()
+
 
     # methods
-    def delete(self):
-        # delete
-        self.lock()
-        os.remove(self._path)
-
-    def get(self, name):
-        # get entry 
-        entry = self._store.get(name)
-        entryCloned = copy.deepcopy(entry)
-        entryCloned.value = self._decrypt_value(entryCloned.value)
-        # conversion
-        if entry.type == "json":
-            entryCloned.value = json.loads(entryCloned.value)
-        # return
-        return entryCloned
-
-    def getValue(self, name):
-        # get entry value
-        entry = self._store.get(name)
-        value = self._decrypt_value(entry.value)
-        # conversion
-        if entry.type == "json":
-            value = json.loads(value)
-            value = json.dumps(value, indent=2)
-        # return        
-        return value
-
-    def exists(self, name):
-        # exists entry
-        return self._store.exists(name)
-
-    def set(self, name, value, type: str = None, services: Optional[list] = None, description: str = "", meta: Optional[dict] = None):
-        # set entry value
-        self._validate_password()
-        if self._store.exists(name):
-            entry = self._store.get(name)
-        else:
-            entry = SecretEntry(
-                key         = name,
-                type        = "password",
-                meta        = {},
-                services    = [],
-                value       = "",
-                description = ""
-            )
-        if type:
-            entry.type = type
-        if services is not None:
-            entry.services = services
-        if description:
-            entry.description = description
-        if meta is not None and len(meta) > 0:
-            entry.meta = meta
-        # conversion for json type
-        if entry.type == "json" and isinstance(value, str):
-            value = json.loads(value)
-            value = json.dumps(value)
-        # encrypt and set
-        entry.value = self._encrypt_value(value)
-        self._store.set(entry)
-        # save
-        self._save()
-    
-    def keys(self):
-        # get keys list
-        return self._store.list_keys()
-    
-    def remove(self, name):
-        # remove entry
-        self._validate_password()
-        entry = self._store.get(name)
-        self._store.remove(name)
-        self._save()
-        
     def edit(self):
-        # edit
-        tmp = copy.deepcopy(self._store)
         # decrypt
-        for entry in tmp.secrets.values():
-            entry.value = self._decrypt_value(entry.value)
-            # conversion
-            if entry.type == "json":
-                entry.value = json.loads(entry.value)
+        text = self._decrypt(self._text)
+        format = self._path.suffix.lstrip(".")
         # edit
         xeditor = XEditor()
-        text = tmp.to_json()
-        result = xeditor.editText(text, format = "json")
+        result = xeditor.editText(text, format = format)
         # apply changes
         if result != None:
-            # load
-            tmp = SecretsStore.from_json(self._path.stem, result)
-            # conversion
-            for key in tmp.list_keys():
-                entry = tmp.get(key)
-                if entry.type == "json" and isinstance(entry.value, str):
-                    entry.value = json.loads(entry.value)
             # encrypt
-            for key in tmp.list_keys():
-                entry = tmp.get(key)
-                entry_value = entry.value
-                # conversion
-                if entry.type == "json":
-                    entry_value = json.dumps(entry_value)
-                # check if changed
-                if self._store.exists(key):
-                    old_entry = self._store.get(key)                    
-                    old_entry_value = old_entry.value
-                    if old_entry.type == "json":
-                        old_entry_value = json.dumps(old_entry_value)
-                    if entry_value == old_entry_value:
-                        entry_value = old_entry_value
-                        continue
-                # encrypt changed value only
-                entry.value = self._encrypt_value(entry_value)
-            # reassign
-            self._store = tmp
+            self._text = self._encrypt(result)
             # save
             self._save()
-    
-    def edit_secret(self, name):
-        # edit single secret
-        entry = self._store.get(name)
-        # edit
-        xeditor = XEditor()
-        text = entry.value
-        text = self._decrypt_value(text)
-        # conversion
-        if text == "":
-            text = " "
-        if entry.type == "json" and isinstance(text, str):
-            text = json.dumps(json.loads(text), indent=4)
-        # edit
-        result = xeditor.editText(text, format = entry.type)
-        # apply changes
-        if result != None:
-            # conversion
-            if entry.type == "json" and isinstance(result, str):
-                result = json.loads(result)
-                result = json.dumps(result)
-            # set
-            entry.value = self._encrypt_value(result)
-            self._store.set(entry)
-            self._save()
 
+    def get(self, name):
+        # get value
+        text = self._decrypt(self._text, return_unprefixed_values = True )
+        return self._handler.getValue(text, name)
+
+    def export(self):
+        # decrypt
+        text = self._decrypt(self._text, return_unprefixed_values = True )
+        # return
+        return text
+    
     def info(self):
         # info
         info = {
-            "Project": self._git_project,
-            "Vault name": self._name,
-            "Config path": self._path_config,
-            "Path": self._path,
-            "Status": f"locked (run 'xvault unlock {self._name}')" if self.is_locked() else "unlocked (cached in keyring)",
-            "Secrets count": len(self._store.secrets),
-            "Schema version": self._store.meta.schema_version,
-            "Crypto version": self._store.meta.crypto_version,
+            "File": self._path,
+            "Format": self._path.suffix.lstrip("."),
+            "Status": f"uninitialized" if self.is_unitialized() else f"locked" if self.is_locked() else "unlocked",
+            "Schema version": self._meta.schema_version,
+            "Crypto version": self._meta.crypto_version,
+            "Encrypted": self._text.count("enc:") 
         }
         return info
-    def getPath(self):
-        # get path
-        return self._path
-    
-    def to_json(self):
-        # to json
-        tmp = copy.deepcopy(self._store)
-        for entry in tmp.secrets.values():
-            if entry.type == "json":
-                entry.value = json.loads(self._decrypt_value(entry.value))
-            else:
-                entry.value = self._decrypt_value(entry.value)
-        return tmp.to_json()
 
 
-    # lock/unlock
+    # lock/unlock methods
     def unlock(self):
         # unlocking
         self._validate_password()
@@ -244,141 +364,180 @@ class XVault():
         encoded_key = base64.b64encode(key).decode()
         canonical_path = str(self._path.resolve())
         store_id = sha256(canonical_path.encode()).hexdigest()
-        keyring.set_password(KEYRING_APP, store_id, encoded_key)
+        keyring.set_password(KEYRING_APP_NAME, store_id, encoded_key)
 
+    def is_unlocked(self):
+        # check if unlocked
+        try:
+            self._validate_password()
+        except Exception:
+            return False
+        return True
+    
     def is_locked(self):
         # check if locked
+        if self._meta.check is None:
+            return False  # no check value in meta, consider it as unlocked (e.g. first time setup)
         canonical_path = str(self._path.resolve())
         store_id = sha256(canonical_path.encode()).hexdigest()
-        encoded_key = keyring.get_password(KEYRING_APP, store_id)
+        encoded_key = keyring.get_password(KEYRING_APP_NAME, store_id)
         return encoded_key is None
+    
+    def is_unitialized(self):
+        # check if uninitialized
+        return self._meta.check is None
     
     def lock(self):
         # lock
         canonical_path = str(self._path.resolve())
         store_id = sha256(canonical_path.encode()).hexdigest()
-        if not keyring.get_password(KEYRING_APP, store_id) is None:
-            keyring.delete_password(KEYRING_APP, store_id)
+        if not keyring.get_password(KEYRING_APP_NAME, store_id) is None:
+            keyring.delete_password(KEYRING_APP_NAME, store_id)
+    
+    def rekey(self, new_password: str):
+        # rekey
+        # validate new password
+        if not new_password:
+            raise ValueError("Unable to rekey: new password cannot be empty")
+        # decrypt with old key
+        decrypted_text = self._decrypt(self._text)
+        # clear old key from memory and keyring
+        self._key = None
+        self._meta.check = None
+        self._meta.check = None
+        self.lock()
+        # set new password and derive new key
+        self._password = new_password
+        key = self._get_key()
+        # encrypt with new key
+        self._text = self._encrypt(decrypted_text)
+        # save
+        self._save()
+        # unlock
+        self.unlock()
+
+    def validate(self):
+        # format
+        checks = []
+        status = "ok"
+        # check file format
+        checks.append({"name": "parse", "severity": "info","message": f"ok ({self._path.suffix})"})
+        # check salt
+        if not self._meta.salt:
+            checks.append({"name": "salt", "severity": "error", "message": f"missing"})
+        else:   
+            checks.append({"name": "salt", "severity": "info", "message": f"ok"})
+            salt_raw = bytes.fromhex(self._meta.salt)
+            if len(salt_raw) != 16:
+                checks.append({"name": "salt-length", "severity": "error", "message": f"invalid length ({len(salt_raw)} bytes), expected 16 bytes"})
+            else:
+                checks.append({"name": "salt-length", "severity": "info", "message": f"ok ({len(salt_raw)} bytes)"})
+        # check check
+        if not self._meta.check:
+            checks.append({"name": "check", "severity": "error", "message": f"missing"})
+        else:   
+            checks.append({"name": "check", "severity": "info", "message": f"ok"})            
+        # check status
+        if self.is_unitialized():
+            checks.append({"name": "status", "severity": "warning", "message": f"uninitialized"})
+        elif self.is_locked():
+            checks.append({"name": "status", "severity": "warning", "message": f"locked"})
+        else:
+            checks.append({"name": "status", "severity": "info", "message": f"ok (unlocked)"})
+        # validate password
+        self.is_locked
+        if self.is_unlocked():
+            try:
+                self._validate_password()
+                checks.append({"name": "password-validation", "severity": "info", "message": f"ok"})
+            except Exception as e:
+                checks.append({"name": "password-validation", "severity": "error", "message": f"invalid password: {str(e)}"})
+        # decrypt
+        try:
+            self._decrypt(self._text)
+            checks.append({"name": "decryp", "severity": "info", "message": f"ok"})
+        except Exception as e:
+            checks.append({"name": "decryp", "severity": "error", "message": f"error: {str(e)}"})
+        # decrypt values
+        checks.append({"name": "decryp count", "severity": "info", "message": f"ok ({self._text.count("enc:")})"})
+        # return
+        return {
+            "status": status,
+            "checks": checks
+        }
 
 
-    # static methods
+    # static lock/unlock methods
     @staticmethod
-    def get_db_names():
-        (folder, _, _) = XVault._get_store_path("*")
-        folder_stem = folder.stem
-        rx = re.compile("^" + re.escape(folder_stem).replace(r"\*", r"(.+)") + "$")
-        placeholders = []
-        for file in folder.parent.glob(folder.name):  
-            file_stem = file.stem
-            placeholder = rx.match(file_stem).group(1)
-            placeholders.append(placeholder)
-        return placeholders
-    
-    @staticmethod
-    def delete_db(dbname: str) -> bool:
-        (path, _, _) = XVault._get_store_path(dbname)
-        if os.path.isfile(path):
-            os.remove(path)
-            return True
-        return False
-    
-    @staticmethod
-    def exists_db(dbname: str) -> bool:
-        (path, _, _) = XVault._get_store_path(dbname)
-        return os.path.isfile(path)
-    
-    @staticmethod
-    def is_locked_db(dbname: str) -> bool:
-        xvault = XVault(dbname)
+    def is_locked_file(path: str) -> bool:
+        xvault = XVault(path)
         return xvault.is_locked()
+    @staticmethod
+    def is_uninitialized_file(path: str) -> bool:
+        xvault = XVault(path)
+        return xvault.is_unitialized()
     
 
     # read/write utils
-    def _load(self):
-        if os.path.isfile(self._path):
-            with open(self._path, "r") as file:
-                text = file.read()
-                self._store = SecretsStore.from_json(self._path.stem, text)
-        else:
-            # empty 
-            self._store = SecretsStore(
-                name=self._path.stem,
-                meta=SecretsMeta(
-                    salt = os.urandom(16).hex()
-                ),
-            )
-            self._store.meta.check = self._encrypt_value(CHECK_VALUE)
-    
+    def _load(self):        
+        # text
+        with open(self._path, "r", encoding="utf-8-sig") as file:
+            text = file.read().strip()
+         # parse 
+        (self._meta, self._text) = self._handler.parse(text)
+        # ensure no cached key for this file in keyring (if new)
+        if self._meta.check is None:            
+            self.lock()
+
+
     def _save(self):
         # save
-        text = self._store.to_json()
-        with open(self._path, "w") as file:
-            file.write(text)
+        # forces generation of check value in meta if not exists (e.g. first time setup) by encrypting known value and storing in meta.check
+        if self._meta.check is None:
+            self._meta.check = self._encrypt_value(META_CHECK_VALUE)
+        # encode
+        result = self._handler.stringify(self._meta, self._text)
+        if not result.endswith("\n"):
+            result += "\n"
+        # write
+        with open(self._path, "w", encoding="utf-8") as file:
+            file.write(result.strip())
 
 
-    # path utils
-    def _get_store_path(dbname: str) -> Path:
-        # get path for dbname, based on git repo or current folder
-        git_path = XVault._get_git_folder_path()
-        file = git_path / VAULT_GIT_FOLDER / (dbname + FILE_EXTENSION)
-        # check if exists .xvault/config file in git repo, if exists use it as config
-        git_config_file = git_path / CONFIG_FILE
-        
-        if git_config_file.exists() and git_config_file.is_file():
-            config = dotenv_values(git_config_file)
-            if "file" in config:
-                file = config["file"]
-                file = file.replace("{project}", git_path.stem).replace("{name}", dbname)
-                file = Path(file).resolve()
-                file.parent.mkdir(parents=True, exist_ok=True)
-                return (file, git_config_file, git_path.stem)
-        else:
-            git_config_file = None
-        # use {project}/.xvault/{name}.xvault as default path
-        file.parent.mkdir(parents=True, exist_ok=True)
-        return (file, git_config_file, git_path.stem)
-    
-    def _get_git_folder_path(start_path: Optional[Path] = None) -> Optional[Path]:
-        if start_path is None:
-            current_path = Path.cwd()
-        else:
-            current_path = Path(start_path).resolve()
-        for parent in [current_path] + list(current_path.parents):
-            git_dir = parent / ".git"
-            if git_dir.exists() and git_dir.is_dir():
-                return parent
-        raise FileNotFoundError(f"No Git repository found starting from '{current_path}'")
-    
     # decrypt
     def _validate_password(self):
         # try to decrypt meta.check to validate password
+        if not self._meta.check:
+            return  # no check value, skip validation (e.g. first time setup)
         try:
-            value = self._decrypt_value(self._store.meta.check)
+            value = self._decrypt_value(self._meta.check)
         except Exception as e:
-            raise ValueError("Invalid password") from e
-        if value != CHECK_VALUE:
-            raise ValueError("Invalid password")
-    
+            raise ValueError("Unable to validate password: invalid password") from e
+        if value != META_CHECK_VALUE:
+            raise ValueError("Unable to validate password: invalid password")
+   
     def _get_key(self):
         # get key, derive if not exists, or return cached
         if self._password is None and self._key is None:
             # try to get from keyring
             canonical_path = str(self._path.resolve())
             store_id = sha256(canonical_path.encode()).hexdigest()
-            encoded_key = keyring.get_password(KEYRING_APP, store_id)
+            encoded_key = keyring.get_password(KEYRING_APP_NAME, store_id)
             if encoded_key:
                 self._key = base64.b64decode(encoded_key)
         if self._key is not None:
             return self._key
         if not self._password:
-            raise ValueError("Store is locked. Password required.")
+            raise ValueError("Unable to get key: store is locked. Password required.")
         if self._key is None:
             # derive the key
-            if self._store.meta.crypto_version == 1:
+            if not self._meta.salt:
+                self._meta.salt = os.urandom(16).hex()        
+            if self._meta.crypto_version == 1:
                 # v1: argon2id + AES-256
                 self._key = hash_secret_raw(
                     secret      = self._password.encode(),
-                    salt        = bytes.fromhex(self._store.meta.salt),
+                    salt        = bytes.fromhex(self._meta.salt),
                     time_cost   = 5,
                     memory_cost = 131072,  # 128Mb
                     parallelism = 4,
@@ -386,24 +545,35 @@ class XVault():
                     type        = Type.ID
                 )
             else:
-                raise ValueError(f"Unsupported crypto version in meta: {self._store.meta.crypto_version}")            
+                raise ValueError(f"Unable to derive key: unsupported crypto version in meta: {self._meta.crypto_version}")            
+            
         # clear password from memory
         self._password = None
-        # unlock
-        if self._store.meta.check:
-            self.unlock()
+        # clear cache from memory
+        self._cache = {}
         # return
         return self._key
     
+    def _decrypt(self, text: str, return_unprefixed_values: bool = False) -> str:
+        # decrypt all values in text
+        def decrypt_value(value):
+            value = value[len(ENC_PREFIX):]
+            return (ENC_PREFIX if not return_unprefixed_values else "") + self._decrypt_value(value)
+        return self._handler.replace_enc_tokens(text, decrypt_value)
+    
+    def _encrypt(self, text: str) -> str:
+        # encrypt all values in text
+        def encrypt_value(value):
+            value = value[len(ENC_PREFIX):]
+            return ENC_PREFIX + self._encrypt_value(value)
+        return self._handler.replace_enc_tokens(text, encrypt_value)
+
     def _decrypt_value(self, encrypted_value: str) -> str:
-        # decrypt value
+        # decrypt text value
         key = self._get_key()
-        if self._store.meta.crypto_version == 1:
+        if self._meta.crypto_version == 1:
             # schema 1: AES-GCM with random nonce
-            if not encrypted_value.startswith(ENC_PREFIX + "v" + str(self._store.meta.crypto_version) + ":"):
-                raise ValueError("Invalid encrypted format")
-            encoded = encrypted_value[len(ENC_PREFIX + "v" + str(self._store.meta.crypto_version) + ":"):]
-            encrypted_blob = base64.b64decode(encoded)
+            encrypted_blob = base64.urlsafe_b64decode(encrypted_value)
             nonce = encrypted_blob[:12]
             ciphertext = encrypted_blob[12:]
             aesgcm = AESGCM(key)
@@ -412,14 +582,18 @@ class XVault():
                 ciphertext,
                 None
             )
-            return plaintext_bytes.decode("utf-8")
+            result = plaintext_bytes.decode("utf-8")            
+            self._cache[result] = encrypted_value
+            return result
         # error
-        raise ValueError("Invalid crypto version")
+        raise ValueError("Unable to decrypt: invalid crypto version")
     
     def _encrypt_value(self, value: str) -> str:
         # encrypt value
         key = self._get_key()
-        if self._store.meta.crypto_version == 1:
+        if value in self._cache:
+            return self._cache[value]
+        if self._meta.crypto_version == 1:
             # scheme 1: AES-GCM with random nonce
             aesgcm = AESGCM(key)
             nonce = os.urandom(12)  # 96-bit nonce (recommended for GCM)
@@ -432,7 +606,7 @@ class XVault():
             # Store nonce + ciphertext together
             encrypted_blob = nonce + ciphertext
             # Encode to base64 so it fits in JSON
-            return ENC_PREFIX + "v" + str(self._store.meta.crypto_version) + ":" + base64.b64encode(encrypted_blob).decode("utf-8")
+            return base64.urlsafe_b64encode(encrypted_blob).decode("utf-8")
         # error
-        raise ValueError("Invalid crypto version")
+        raise ValueError("Unable to encrypt: invalid crypto version")
 
