@@ -1,6 +1,7 @@
 from ast import pattern
 import base64
 import json
+from io import StringIO
 import json5
 from dotenv import dotenv_values
 from hashlib import sha256
@@ -17,8 +18,13 @@ from dprojectstools.xeditor import XEditor
 from sqlalchemy import text
 from .model import SecretEntry, SecretsMeta, SecretsStore
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 
+# todo:
+# - xvault export --redact (replace secrets with ****)
+# - xvault export --force (require explicit acknowledgement when exporting full plaintext))
+#                         (print a warning to stderr when exporting plaintext.?)
+# - xvault edit file.json ---> colorize
 
 # consts
 META_VARIABLE = "_xvault"  # variable name in JSON/YAML/ENV for storing meta info
@@ -28,6 +34,28 @@ META_CHECK_VALUE = "xvault"  # known value used to validate password by trying t
 
 KEYRING_APP_NAME = "xvault"  # keyring app name for storing unlocked keys
 ENC_PREFIX = "enc:"     # prefix used to identify encrypted values in the store, followed by version info, e.g. "enc:...."
+
+
+# XVault meta
+class XVaultMeta():
+    def __init__(self, schema_version: int, crypto_version: int, salt: str, check: Optional[str]):
+        self.schema_version = schema_version
+        self.crypto_version = crypto_version
+        self.salt = salt
+        self.check = check
+    def to_dict(self):
+        return {
+            "crypto_version": self.crypto_version,
+            "salt": self.salt,
+            "check": self.check
+        }
+    def from_dict(schema_version:int, data: dict):
+        return XVaultMeta(
+            schema_version,
+            crypto_version = data.get("crypto_version", 1),
+            salt = data.get("salt"),
+            check = data.get("check")
+        )   
 
 
 # handlers
@@ -140,7 +168,7 @@ class HandlerEnv(HandlerBase):
         # return
         return (meta, text)
     def replace_enc_tokens(self, text: str, replacer):
-        # pattern to match lines like: SECRET_KEY=enc:.... (value starts with enc: and continues until end of line or comment)
+        # pattern to match lines like: SECRET_KEY=enc:.... (value starts with enc: and continues until end of line or comment)        
         pattern = r'' + ENC_PREFIX + '[^\r\n#"\']+'
         return re.sub(pattern, lambda m: replacer(m.group(0)), text)
     def stringify(self, meta: XVaultMeta, text: str) -> str:
@@ -153,11 +181,10 @@ class HandlerEnv(HandlerBase):
         return result
     def getValue(self, text: str, name: str) -> Optional[str]:
         # pattern to match lines like: SECRET
-        pattern = r'^' + re.escape(name) + r'\s*=\s*([^\r\n#]+)'
-        match = re.search(pattern, text, re.MULTILINE)
-        if match:
-            return match.group(1).strip()
-        return None
+        data = dotenv_values(stream=StringIO(text))
+        if name not in data:
+            return None
+        return data[name]
 
 class HandlerYaml(HandlerBase):
     def parse(self, text: str) -> tuple[XVaultMeta, str]:
@@ -255,34 +282,13 @@ class HandlerXml(HandlerBase):
 
 
 
-# XVault meta
-class XVaultMeta():
-    def __init__(self, schema_version: int, crypto_version: int, salt: str, check: Optional[str]):
-        self.schema_version = schema_version
-        self.crypto_version = crypto_version
-        self.salt = salt
-        self.check = check
-    def to_dict(self):
-        return {
-            "crypto_version": self.crypto_version,
-            "salt": self.salt,
-            "check": self.check
-        }
-    def from_dict(schema_version:int, data: dict):
-        return XVaultMeta(
-            schema_version,
-            crypto_version = data.get("crypto_version", 1),
-            salt = data.get("salt"),
-            check = data.get("check")
-        )   
-
 
 # class
 class XVault():
 
 
     # ctr
-    def __init__(self, path : str, password : Optional[str] = None):
+    def __init__(self, path : str, password : Optional[str] = None, no_cache_key: bool = False):
         # get path
         self._path = Path(path)
         # validate
@@ -292,6 +298,10 @@ class XVault():
         self._password = password
         # key
         self._key = None
+        # no cache key
+        self._no_cache_key = no_cache_key
+        if self._no_cache_key and self._password is None:
+            raise ValueError("Unable to open: no_cache_key option requires password to be provided")
         # load
         self._text = None
         self._meta = None
@@ -313,8 +323,13 @@ class XVault():
         self._handler
         self._load()
         # auto unlock
-        if self._password:
+        if not self._no_cache_key and self._password:
             self.unlock()
+
+    # property
+    @property
+    def path(self):
+        return self._path.resolve()
 
 
     # methods
@@ -405,7 +420,8 @@ class XVault():
         self._key = None
         self._meta.check = None
         self._meta.check = None
-        self.lock()
+        if not self._no_cache_key:
+            self.lock()
         # set new password and derive new key
         self._password = new_password
         key = self._get_key()
@@ -414,7 +430,8 @@ class XVault():
         # save
         self._save()
         # unlock
-        self.unlock()
+        if not self._no_cache_key:
+            self.unlock()
 
     def validate(self):
         # format
@@ -445,8 +462,9 @@ class XVault():
         else:
             checks.append({"name": "status", "severity": "info", "message": f"ok (unlocked)"})
         # validate password
-        self.is_locked
-        if self.is_unlocked():
+        if not self._no_cache_key:
+            checks.append({"name": "password-validation", "severity": "info", "message": f"unknown"})
+        elif self.is_unlocked():
             try:
                 self._validate_password()
                 checks.append({"name": "password-validation", "severity": "info", "message": f"ok"})
@@ -486,7 +504,7 @@ class XVault():
          # parse 
         (self._meta, self._text) = self._handler.parse(text)
         # ensure no cached key for this file in keyring (if new)
-        if self._meta.check is None:            
+        if not self._no_cache_key and self._meta.check is None:            
             self.lock()
 
 

@@ -5,8 +5,9 @@
             "name": "Python Debugger: xvault",
             "type": "debugpy",
             "request": "launch",
+            "console": "externalTerminal",
             "module": "xvault",
-            "args": ["export","tests/default.jsonc"] 
+            "args": ["edit","tests/test.env"] 
         }
     ]
 }

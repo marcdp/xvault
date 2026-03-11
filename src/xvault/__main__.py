@@ -1,6 +1,5 @@
 from pprint import pformat
 import cryptography
-from pwinput import pwinput
 import sys
 import os
 import json
@@ -11,6 +10,7 @@ from .xvault import XVault
 from .xvaultstore import XVaultStore 
 from dprojectstools.commands import command, Argument, Flag, CommandsManager
 from dprojectstools.utils.env import format_env_line
+from dprojectstools.console import read_password
 from importlib.metadata import version, PackageNotFoundError
 
 
@@ -30,12 +30,12 @@ def ask_password(confirm: bool = False, min_length: int = 8, message: str = "Ent
     if not sys.stdin.isatty():
         error("Password is required but cannot be entered in non-interactive mode.")
         exit(-1)
-    result = pwinput(message + ": ", mask="*")
+    result = read_password(message + ": ", mask="*")
     if confirm:
         if len(result) < min_length:
             error(f"Password must be at least {min_length} characters long.")
             sys.exit(1)
-        result_confirm = pwinput("Confirm password: ", mask="*")
+        result_confirm = read_password("Confirm password: ", mask="*")
         if result != result_confirm:
             error("Passwords do not match.")
             sys.exit(1)
@@ -50,7 +50,8 @@ def ask_password(confirm: bool = False, min_length: int = 8, message: str = "Ent
 ])
 def edit(
         path: Annotated[str,  Argument("PATH")],
-        key: Annotated[str,  Argument("KEY")] = ""
+        key: Annotated[str,  Argument("KEY")] = "",
+        no_cache_key: Annotated[bool,  Flag('n', "no-cache-key")] = False
     ):
     # validate
     if not os.path.exists(path):
@@ -58,10 +59,10 @@ def edit(
         return -1
     # ask for password if interactive and not provided
     password = None
-    if XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
+    if no_cache_key or XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
         password = ask_password()
     # create instance
-    xvault = XVault(path, password = password)
+    xvault = XVault(path, password = password, no_cache_key = no_cache_key)
     # action
     if key:
         xvault.edit_secret(key)
@@ -77,7 +78,8 @@ def edit(
 ])
 def get(
         path: Annotated[str,  Argument("PATH")],
-        key: Annotated[str,  Argument("KEY")]
+        key: Annotated[str,  Argument("KEY")],
+        no_cache_key: Annotated[bool,  Flag('n', "no-cache-key")] = False
     ):
     # validate
     if not os.path.exists(path):
@@ -85,13 +87,16 @@ def get(
         return -1
     # ask for password if interactive and not provided
     password = None
-    if XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
+    if no_cache_key or XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
         password = ask_password()
     # create instance
-    xvault = XVault(path, password = password)
+    xvault = XVault(path, password = password, no_cache_key = no_cache_key)
     # action
     value = xvault.get(key)
     # print
+    if value == None:
+        error(f"Key '{key}' not found.") 
+        return -1
     print(value)
 
 
@@ -156,7 +161,8 @@ def lock(
     "xvault export ./dev.json",
 ])
 def export(
-        path: Annotated[str,  Argument("PATH")]
+        path: Annotated[str,  Argument("PATH")],
+        no_cache_key: Annotated[bool,  Flag('n', "no-cache-key")] = False
     ):
     # export
     if not os.path.exists(path):
@@ -164,10 +170,10 @@ def export(
         return -1
     # ask for password if interactive and not provided
     password = None
-    if XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
+    if no_cache_key or XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
         password = ask_password()
     # create instance
-    xvault = XVault(path, password = password)
+    xvault = XVault(path, password = password, no_cache_key = no_cache_key)
     # action
     print(xvault.export())
     
@@ -199,7 +205,8 @@ def info(
     "xvault rekey ./dev.json",
 ])
 def rekey(
-        path: Annotated[str,  Argument("PATH")]
+        path: Annotated[str,  Argument("PATH")],
+        no_cache_key: Annotated[bool,  Flag('n', "no-cache-key")] = False
     ):
     # export
     if not os.path.exists(path):
@@ -207,12 +214,12 @@ def rekey(
         return -1
     # ask for password if interactive and not provided
     password = None
-    if XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
+    if no_cache_key or XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
         password = ask_password()
     #
     new_password = ask_password(message = "New password", confirm=True)
     # create instance
-    xvault = XVault(path, password = password)
+    xvault = XVault(path, password = password, no_cache_key = no_cache_key)
     # action
     xvault.rekey(new_password)
     
@@ -223,7 +230,8 @@ def rekey(
 ])
 def validate(
         path: Annotated[str,  Argument("PATH")],
-        verbose: Annotated[bool, Flag('v', "verbose")] = False
+        verbose: Annotated[bool, Flag('v', "verbose")] = False,
+        no_cache_key: Annotated[bool,  Flag('n', "no-cache-key")] = False
     ):
     # export
     if not os.path.exists(path):
@@ -231,11 +239,11 @@ def validate(
         return -1
     # ask for password if interactive and not provided
     password = None
-    if XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
+    if no_cache_key or XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
         password = ask_password()
     # action
     try:
-        xvault = XVault(path, password = password)
+        xvault = XVault(path, password = password, no_cache_key = no_cache_key)
         result = xvault.validate()
     except Exception as e:
         result = {
@@ -258,16 +266,27 @@ def validate(
 # x validate command
 # x remove v1:
 # x create scafolding for md, xml, yaml
+# x md format
+# x yaml format
+# x get
 
-# md format
-# yaml format
-# xml format
+# xedit editor bar bottom
+# xedit help
+# xedit search
 
-# xeditor: colorize
+# xedit PATH ---- over unexisting file should initialize it on save
+# xedit should use fileextension as "format"
 
-# show
-# set
+# xvault get file.env PATH -> should show unescaped value
+# xvault get file.json PATH -> should show unescaped and undecoded
+# xvault get file.yaml PATH -> should show unescaped and undecoded
 
+# xvault edit over unexisting file should ask for password and initialize it on save
+# xeditor: colorize env
+# xeditor: colorize md
+# xeditor: colorize yaml
+# xeditor: colorize yaml
+# xeditor: colorize json
 
 # replace inner variables format
 
@@ -380,7 +399,11 @@ def store_get(
     # action
     if xvault.exists(key):
         value = xvault.getValue(key)
-        print(value)
+        if value == None:
+            error(f"Secret '{key}' not found.") 
+            return -1
+        else:
+            print(value)
     else:
         error(f"Secret '{key}' not found.") 
         return -1
@@ -421,8 +444,8 @@ def store_set(
     # if value is not provided, read from stdin or ask interactively
     if value is None:
         if sys.stdin.isatty():
-            value1 = pwinput(f"Enter secret value:   ", mask="*")
-            value2 = pwinput(f"Confirm secret value: ", mask="*")
+            value1 = read_password(f"Enter secret value:   ", mask="*")
+            value2 = read_password(f"Confirm secret value: ", mask="*")
             if value1 != value2:
                 error("Aborting update: values do not match.")
                 return -1
