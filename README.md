@@ -1,222 +1,167 @@
-# XVault
+# xvault
 
-![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
-![License](https://img.shields.io/badge/license-MIT-green)
-![Security](https://img.shields.io/badge/encryption-AES--256--GCM-purple)
-![KDF](https://img.shields.io/badge/KDF-Argon2id-orange)
-![PyPI](https://img.shields.io/pypi/v/xvault)
+**xvault is a CLI for keeping secrets _inside_ your real config and notes files, while staying Git-friendly.**
 
-**XVault** is a portable encrypted vault designed for **developers** to securely store secrets, tokens, certificates, and sensitive files while keeping encrypted vaults safe to store in Git repositories.
+Your files remain readable and reviewable, and only the values you explicitly mark as secret are encrypted.
 
-XVault is built around a simple idea:
+The core idea is a **single source of truth**: store secrets, notes, and configuration together in a small set of canonical files (.json, .jsonc, .yaml, .env, .md), and let `xvault` handle safe editing, encryption, and export.
 
-> **Keep encrypted secrets versioned in Git while protecting the keys locally.**
+From these files, you can **derive/export/resolve** the exact formats your tooling expects (e.g., `.env`, JSON config, certificate files) without duplicating plaintext secrets across multiple files or repositories.
 
-XVault supports modern cryptography, OS keyring integration, and flexible project configuration to make secret management safe and developer-friendly.
-
-## Single Source of Truth
-
-XVault acts as a **single source of truth** for all sensitive configuration a project needs (secrets, tokens, passwords, certificates, and file blobs). From this encrypted vault, you can **derive/export** the exact formats your tooling expects (e.g., `.env`, JSON config, certificate files) without duplicating plaintext secrets across multiple files or repositories.
-
-To minimize **cognitive load**, XVault keeps the workflow intentionally simple: one encrypted store, secure defaults, and straightforward commands—no servers to run, no KMS to configure, and no complex policy systems. It’s optimized for **solo developers and small teams** who want a **local-first** vault that integrates cleanly with Git.
+To minimize **cognitive load**, `xvault` keeps the workflow intentionally simple: secure defaults, straightforward commands, and optional OS key caching (no servers to run, no KMS to configure, and no complex policy systems). It’s optimized for **solo developers and small teams** who want a **local-first** vault that integrates cleanly with Git.
 
 ---
 
-## Contents
-- [Motivation](#motivation)
-- [Features](#features)
-- [Security Model](#security-model)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Import Secrets](#import-secrets)
-- [Export Secrets](#export-secrets)
-- [Project Configuration](#project-configuration)
-- [Roadmap](#roadmap)
-- [License](#license)
+## Intro
+
+### Motivation: single source of truth for developer secrets
+Most developer workflows end up with friction such as:
+
+- a config file plus a separate secrets file
+- manual merging before deployment / resolving secrets at runtime
+- ugly diffs (whole files encrypted)
+- accidental leaks when exporting plaintext
+
+`xvault` is designed to keep your **notes and configs** as the source of truth, with **inline secrets** that stay encrypted on disk.
+
+### Comparison: SOPS and git-crypt
+`xvault` overlaps with tools like SOPS and git-crypt, but it targets a slightly different “developer ergonomics” space:
+
+- **SOPS** shines for GitOps/Kubernetes workflows and KMS-backed key management. It’s great when your infra pipeline is already built around SOPS + KMS/PGP/age.  
+  `xvault` is not trying to replace that ecosystem; it focuses on **editing arbitrary files (.json, .jsonc, .env, .yml, .md)** with minimal ceremony and clean diffs.
+
+- **git-crypt** is effective for encrypting entire files transparently in Git.  
+  `xvault` takes a more explicit approach: secrets are marked with `enc:` and only those values are encrypted, keeping the rest of the document readable.
+
+If your main need is “encrypt a whole directory of files in git”, git-crypt may be enough.  
+If your main need is “keep notes/config readable while only encrypting secret values”, `xvault` is a better fit.
+
+### Design philosophy
+- **Explicit by default**: only values marked with `enc:` are treated as secrets.
+- **Git diffs matter**: keep secrets stored as single-line ciphertext.
+- **Stay close to real formats**: work with JSON/JSONC/YAML/.env/Markdown without forcing a rigid schema.
+- **Developer UX first**: `edit` is the primary workflow; everything else supports it.
+- **Safe defaults**: prefer failing loudly over producing ambiguous output.
 
 ---
 
-## Motivation
+## Usage
 
-Many developers store secrets in `.env` files or private folders.
-These files are frequently committed accidentally to Git repositories.
-Tools such as **Hashicorp Vault** or **Mozilla SOPS** solve this problem
-for infrastructure environments, but they often require external
-key management systems.
+`xvault` is designed for two main workflows. Both rely on the same core idea: **keep secrets inside the files you already use**, encrypt only what you explicitly mark as secret (`enc:`), and derive/export the exact outputs when needed.
 
-XVault was created to provide a **lightweight developer-focused vault**
-that works locally, integrates with Git workflows, and requires no
-external infrastructure.
+### 1) Application config files with embedded secrets
 
-XVault focuses on a **different niche** than most secret-management tools:
+Use `xvault` directly on configuration files that your applications and tooling already understand:
 
-- **Local-first** — works without external infrastructure
-- **Git-friendly** — encrypted files are safe to version in repositories
-- **Developer-oriented** — designed for development workflows
-- **Portable** — no dependency on cloud KMS providers
+- `.env` files
+- JSON / JSONC
+- YAML
+- md files
 
-The focus is **developer ergonomics**: fewer moving parts, fewer decisions, and a predictable workflow that works the same across projects.
+You keep the config readable, and only encrypt the values that start with `enc:`.
 
-### Comparison with SOPS and git-crypt
-
-**XVault**, [SOPS (Secrets OPerationS)](https://github.com/mozilla/sops), and [git-crypt](https://github.com/AGWA/git-crypt) share a similar goal: storing encrypted secrets safely inside version-controlled files. They allow developers to keep encrypted configuration in Git while protecting the decryption keys locally. However, their design philosophies differ. SOPS focuses on infrastructure and DevOps workflows (Kubernetes, Terraform, cloud KMS integration), whereas **XVault** is designed primarily as a **developer-centric vault**, emphasizing simplicity, local password-based encryption, and flexible secret storage for development environments and personal projects.
-
-| Feature | XVault | SOPS | git-crypt |
-|---|---|---|---|
-| Primary goal | Developer secret vault | Infrastructure secret management | Encrypt selected files in a Git repo |
-| Encryption model | Password-derived key (Argon2id) | External key management (KMS, GPG, Age) | Key-based (GPG) / shared symmetric key for collaborators |
-| Encryption algorithm | AES-256-GCM | AES-256-GCM | AES (transparent file encryption) |
-| Key derivation | Argon2id | Not applicable (external keys) | Not a focus (GPG-managed keys) |
-| Key storage | OS keyring (optional cache) | External key providers | GPG keychain |
-| File format | XVault file | YAML / JSON / ENV | Original file formats (encrypted blobs in Git) |
-| Git-friendly storage | Yes | Yes | Yes (encrypted blobs in Git) |
-| CLI workflow | Developer-oriented | DevOps / infrastructure-oriented | Git workflow oriented |
-| External dependencies | None required | Often requires KMS / GPG / Age | Requires GPG (for multi-user) |
-| Secret import/export | dotenv, JSON | YAML/JSON editing | Not built-in |
-| Typical use case | Developer secrets, local environments, personal vaults | Kubernetes, CI/CD, infrastructure configuration | Team repos where only some files should be readable to authorized users |
-
-**In short:** XVault is a **local-first, developer-oriented vault** optimized for keeping a *single source of truth* and **deriving/exporting** the formats your projects need. SOPS is best when you want **infrastructure-focused workflows** and integration with KMS/GPG/Age key management. git-crypt is ideal when you want **transparent encryption of specific files** inside a Git repo, without a structured secrets store or import/export pipeline.
-
-### Example workflow
-
+Example (`dev.env`):
+```env
+DB_HOST=localhost
+DB_USER=enc:admin
+DB_PASS=enc:"my password with spaces"
 ```
-D:\Reps\myrepos> xvault create dev
-Enter password: ********
-Confirm password: ********
-Store created: dev
-Path: D:\Reps\myrepos\.secrets\xvault-dev.xvault
-Status: unlocked
+Typical workflow:
 
-D:\Reps\myrepos> xvault set dev API_KEY
-Enter secret value:   ********
-Confirm secret value: ********
-API_KEY created
+- `xvault edit ./dev.env` to safely edit secrets and non-secret config together
+- `xvault export ./dev.env` to materialize a decrypted output for scripts/CI/runtime
+- `xvault get ./dev.env DB_PASS` to extract a decrypted value from file
 
-D:\Reps\myrepos> xvault get dev API_KEY
-12345678
+### 2) Personal vault notes (Markdown)
 
-D:\Reps\myrepos> xvault export dev --format env
-API_KEY=12345678
+Use `xvault` as a local-first personal vault where you store notes, runbooks, logs, credentials, and key material inside Markdown files.
 
+A common pattern is:
+
+- one Markdown file per topic (e.g., servers.md, accounts.md, infra.md)
+- secrets stored inside standard fenced blocks like ```env
+
+Example (servers.md):
+
+````md
+## prod-api-01
+
+Notes and runbook steps in plain text...
+
+```env
+SSH_HOST=prod-api-01.example.com
+SSH_USER=enc:admin
+SSH_PASS=enc:"my password with spaces"
+SSH_KEY_PEM_B64=enc:LS0tLS1CRUdJTiBPU...
 ```
+```` 
 
-XVault includes an interactive editor (similar to SOPS) that decrypts values in-memory, opens an editor view, and re-encrypts on save.
-
-<img src="docs/readme-demo.gif" alt="XVault demo" width="600" />
-
-### Design Philosophy
-
-**XVault** prioritizes **developer ergonomics**: a predictable workflow, minimal setup, and secure defaults (password → key → keyring → encrypt/decrypt).
-
-This makes XVault particularly well-suited for:
-
-- developer environments
-- local secret management
-- small teams encrypted vaults
-- Git-friendly secret storage without external infrastructure
-- personal encrypted vaults
+Guidelines:
+- Use enc: for secret values.
+- Use *_B64 variables for multi-line or binary material (PEM/PFX/PDF/PNG) encoded as base64.
+- Keep everything else (notes, procedures, logs) in plain text for excellent Git diffs and searchability.
 
 ---
 
 ## Features
 
-- AES-256-GCM authenticated encryption
-- Argon2id password-based key derivation
-- Cross-platform keyring integration
-- Git-friendly `.xvault` files (JSON-based)
-- dotenv and JSON import/export
-- Multiple vault stores per project
-- Flexible vault location configuration
-- Designed for automation and developer workflows
-- Integrated interactive editor (SOPS-style) to edit vault contents safely
+- **Formats**: JSON, JSONC, YAML, `.env`, Markdown
+- **Inline secret marking**: `enc:` prefix indicates secret values
+- **Single-line ciphertext** for clean Git diffs
+- **Optional variable substitution**: resolve `${VAR}` placeholders (`xvault get file.json secret_name --resolve`)
+- **Key caching (optional)**:
+  - `unlock` stores a derived key in the OS key store
+  - `lock` removes it
+  - `--no-cache-key` disables cache read/write per command
+- **Crypto (v1)**:
+  - Password-based key derivation: **Argon2id**
+  - Encryption: **AES-256-GCM** (authenticated encryption)
+- **Rekey support**: rotate secrets to a new password (`xvault rekey`)
+- **Validation**: sanity checks for file structure and encrypted markers (`xvault validate`)
 
 ---
-
 
 ## Security Model
 
-XVault is designed to protect secrets stored in version-controlled repositories.
+### What xvault protects against
+- Accidental commits of plaintext secrets by keeping secrets **encrypted on disk**
+- “Diff leakage”: avoids storing whole plaintext configs; only `enc:` values become ciphertext
+- Backup leakage: encrypted vault files are safe to back up as ciphertext
+- Tampering detection: AES-GCM provides integrity/authentication for secret values (wrong key or modified ciphertext fails to decrypt)
+- By default, xvault edit uses an in-terminal editor and does not write plaintext temp files.
 
-### Threats mitigated
+### Threats it does NOT fully solve (limitations)
+- **Weak passwords**: your vault is only as strong as the password you choose. Use a strong passphrase (e.g., 12–16+ characters, preferably more).
+- **Compromised machine**: if an attacker owns your box while you edit, they can read plaintext.
+- **Plaintext exports**: `export` can produce decrypted content. Handle it carefully (gitignore, temporary locations).
+- **OS key cache availability**: keyring/credential storage may fail in some contexts (e.g., Windows over SSH). Use `--no-cache-key` or alternative cache strategies.
 
-- accidental disclosure of secrets committed to Git
-- unauthorized access to vault files without the password
-- offline brute-force attacks through strong password-based key derivation
+### Threat mitigations (practical)
+- Use a strong, unique password (prefer long passphrases).
+- Keep repositories private; avoid cloning vault repos on untrusted machines.
+- Prefer `--no-cache-key` in sensitive environments (remote sessions, servers, CI).
+- Run `xvault validate` before committing.
 
-### Cryptographic design
+### Example file (conceptual)
+`xvault` stores a small metadata header (e.g. `_xvault`) and secrets as `enc:` values:
 
-| Component | Algorithm |
-|----------|-----------|
-| Key derivation | Argon2id |
-| Encryption | AES-256-GCM |
-| Nonce | 96-bit random nonce |
-| Authentication | GCM tag |
-
-Argon2id parameters:
-
-```
-time_cost = 5
-memory_cost = 128 MB
-parallelism = 4
-```
-
-These parameters significantly increase the cost of offline password brute-force attacks.
-
-### High-level encryption flow diagram
-```mermaid
-flowchart TD
-  U[User enters password] --> KDF[Argon2id<br/>password + salt -> 32-byte key]
-  KDF -->|optional| KR[Store derived key in OS keyring<br/>Windows DPAPI / macOS Keychain / Linux Secret Service]
-  KDF --> AES[AES-256-GCM encryption/decryption]
-  KR --> AES
-
-  AES --> ENC[Encrypt secret value<br/>random nonce + ciphertext + tag]
-  ENC --> FILE[Write to .xvault file<br/>value stored as enc:v1:...]
-  FILE --> DEC[Read encrypted value from .xvault file]
-  DEC --> AES
-  AES --> OUT[Decrypt -> plaintext value]
-```  
-
-### Limitations
-
-XVault does **not** protect against:
-
-- compromised host machines
-- malicious code execution
-- memory extraction attacks
-- weak user passwords
-
-
----
-
-## Example Vault File
-
-Vault files are JSON documents containing encrypted values.
-
-```json
+```jsonc
 {
-  "meta": {
-    "schema_version": 1,
-    "crypto_version": 1,
-    "salt": "0a24afe64ea0b73bee45f1ad31fcbd2e",
-    "check": "enc:v1:DtZmJqBmJbL+uvvojo4DmCs5+qhQUb80LiwV9mVqqy2VFfh5"
-  },
-  "secrets": {
-    "API_KEY": {
-      "type": "password",
-      "description": "API key for external service",
-      "meta": {},
-      "services": [],
-      "value": "enc:v1:..."
-    }
+  "_xvault": "xvault:<opaque-metadata-blob>",
+  "db": {
+    "host": "...",
+    "user": "enc:...",
+    "password": "enc:..."
   }
 }
 ```
 
-The vault file can safely be stored in Git because **all secret values are encrypted**.
-
----
-
+```env
+_xvault="xvault:<opaque-metadata-blob>"
+DB_HOST=...
+DB_USER=enc:...
+DB_PASSWORD=enc:...
+```
 
 ## Installation
 
@@ -224,6 +169,7 @@ Install from PyPI:
 
 ```bash
 pip install xvault
+xvault version
 ```
 
 ### Install from source (development)
@@ -233,8 +179,6 @@ Clone the repository:
 ```bash
 # clone the repository:
 git clone https://github.com/marcdp/xvault.git
-# install dependencies:
-pip install -r requirements.txt
 # run the CLI:
 python -m xvault
 # or install as a command:
@@ -243,170 +187,26 @@ pip install .
 
 ---
 
-## Quick Start
 
-### Create a vault
 
-```bash
-xvault create dev
-```
-
-After creating a new vault, it is unlocked (key cached in the OS keyring)
-
-### List vaults
-
-```bash
-xvault list
-```
-
-Example output:
-
-```
-default   3 keys  unlocked
-dev       1 key   locked
-```
-
-### Store a secret
-
-```bash
-xvault set dev API_KEY
-```
-
-### Retrieve a secret
-
-```bash
-xvault get dev API_KEY
-```
-
-### Remove a secret
-
-```bash
-xvault remove dev API_KEY
-```
-
----
-
-## Import Secrets
-
-XVault can import from common formats.
-
-### Import `.env`
-
-```bash
-xvault import dev .env
-```
-
-Example `.env`:
-
-```
-DATABASE_URL=postgres://localhost/db
-API_KEY=abcdef123
-```
-
-### Import JSON
-
-```bash
-xvault import dev config.json
-```
-
-Example:
-
-```json
-{
-  "API_KEY": "123456",
-  "SERVICE_TOKEN": "abcdef"
-}
-```
-
----
-
-## Export Secrets 
-
-### Derive Project Secrets from the Vault
-
-A common problem in real projects is secret sprawl: the same values end up duplicated across `.env`, CI variables, deployment scripts, and certificate files.
-
-XVault avoids this by storing everything in one place and generating the rest on demand:
-
-- Store secrets once in XVault
-- Export to the format your project needs (`.env`, JSON, etc.)
-- (Optional) export file entries (certs/keys) back to real files when needed
-
-Export vault contents:
-
-```bash
-xvault export dev
-```
-
-Formats supported:
-
-```
---format env
---format json
---format xvault
-```
-
----
-
-## Vault Unlocking
-
-XVault caches vault keys securely using the system keyring.
-
-Unlock a store:
-
-```bash
-xvault unlock dev
-```
-
-Lock it again:
-
-```bash
-xvault lock dev
-```
-
-Supported keyring backends:
-
-- Windows DPAPI
-- macOS Keychain
-- Linux Secret Service
-
----
-
-## Project Configuration
-
-Vault location can be configured per Git repository.
-
-Create a `.xvault` file in the project root:
-
-```
-file = ../dev/secrets/{project}-{name}.xvault
-```
-
-Variables:
-
-| Variable | Meaning |
-|---------|---------|
-| `{project}` | Git repository name |
-| `{name}` | vault store name |
-
-Example resulting file:
-
-```
-../dev/secrets/myproject-dev.xvault
-```
-
-This allows multiple repositories to share a centralized secrets directory.
-
----
 
 ## Roadmap
 
-Planned improvements:
+Short-term (quality and UX):
+- Improve TUI editor UX (colors, navigation, safer save guards, undo-redo)
+- Better Markdown conventions for multi-line secrets and binary references
+- Safer export modes (explicit confirmations)
 
-- rekey password: `xvault repassword MYSTORE`
-- VSCode extension (to manage xvault contents as a virtual filesystem)
+Mid-term (developer workflows):
+- Export filtering by section/scope in Markdown (e.g., server.var)
+- SSH-agent helpers (load selected keys with TTL)
+- A "blob store" for large binary secrets (PFX/PDF/PNG) with manifest + encrypted blobs
 
----
+Long-term:
+- VS Code virtual filesystem provider (xvault:/...) backed by xvault (no plaintext temp files)
+- Optional policy validation hooks (pre-commit integration)
+- Optional alternative key caching backends (more reliable across SSH / WSL)
+
 
 ## License
 

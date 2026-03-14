@@ -2,6 +2,7 @@ from ast import pattern
 import base64
 import json
 from io import StringIO
+from pydoc import resolve
 import json5
 from dotenv import dotenv_values
 from hashlib import sha256
@@ -19,12 +20,6 @@ from sqlalchemy import text
 from .model import SecretEntry, SecretsMeta, SecretsStore
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from abc import abstractmethod
-
-# todo:
-# - xvault export --redact (replace secrets with ****)
-# - xvault export --force (require explicit acknowledgement when exporting full plaintext))
-#                         (print a warning to stderr when exporting plaintext.?)
-# - xvault edit file.json ---> colorize
 
 # consts
 META_VARIABLE = "_xvault"  # variable name in JSON/YAML/ENV for storing meta info
@@ -339,7 +334,7 @@ class XVault():
         format = self._path.suffix.lstrip(".")
         # edit
         xeditor = XEditor()
-        result = xeditor.editText(text, format = format)
+        result = xeditor.editText(text, format = format, title = f"Editing secrets in {self._path.resolve()}")
         # apply changes
         if result != None:
             # encrypt
@@ -347,14 +342,21 @@ class XVault():
             # save
             self._save()
 
-    def get(self, name):
+    def get(self, name: str, resolve: bool = False):
         # get value
         text = self._decrypt(self._text, return_unprefixed_values = True )
+        # resolve
+        if resolve:
+            text = self._resolve(text)
+        # get value
         return self._handler.getValue(text, name)
 
-    def export(self):
+    def export(self, resolve: bool = False) -> str:
         # decrypt
         text = self._decrypt(self._text, return_unprefixed_values = True )
+        # resolve
+        if resolve:
+            text = self._resolve(text)
         # return
         return text
     
@@ -500,7 +502,7 @@ class XVault():
     def _load(self):        
         # text
         with open(self._path, "r", encoding="utf-8-sig") as file:
-            text = file.read().strip()
+            text = file.read()
          # parse 
         (self._meta, self._text) = self._handler.parse(text)
         # ensure no cached key for this file in keyring (if new)
@@ -519,8 +521,20 @@ class XVault():
             result += "\n"
         # write
         with open(self._path, "w", encoding="utf-8") as file:
-            file.write(result.strip())
+            file.write(result)
 
+    # resolve
+    def _resolve(self, text: str) -> str:
+        # resolve all values in text
+        pattern = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+        def replacer(match):
+            name = match[2:-1]
+            value = self._handler.getValue(text, name)
+            if value is None:
+                raise ValueError(f"Unable to resolve: variable '{name}' not found")
+            return value
+        text = re.sub(pattern, lambda m: replacer(m.group(0)), text)
+        return text
 
     # decrypt
     def _validate_password(self):

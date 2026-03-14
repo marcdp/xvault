@@ -2,15 +2,16 @@
     // xvault meta variable (do not modify)
     "_xvault": "xvault:eyJjcnlwdG9fdmVyc2lvbiI6IDEsICJzYWx0IjogImMxNDAxMzkwYTYwZTg2MTAwN2M4MDU0MzIzYmJlNjk5IiwgImNoZWNrIjogImVuYzp2MTpGUjZJanAvM0kraHluS2pzV1J0cklabUVuWFlqL3FXQStxOTE5SXFlYzlzVXB3PT0ifQ==",
     
-    // this is a commentssasd asd asd
-    "value1":"111113213_asd2331211233asdds22222dasdasdasdasd2223334444333223333336611",
-    "value2":"enc:sBbCceUzv05nwlBFkteNjf26JBO8fMJMrQCODnLxi6JhKJ3-8-sYsR5zUww=",
+    // this is a comment
+    "value1": "111113213_asd2331211233asdds22222dasdasdasdasd2223334444333223333336611",
+    "value2": "enc:sBbCceUzv05nwlBFkteNjf26JBO8fMJMrQCODnLxi6JhKJ3-8-sYsR5zUww=",
 
     // this is another comment àaaaáaa
     "value3": {
-        "value31":"enc:zoHCMdU3YRF0cfLdNtTRXe327rrTx1Z2unlGmWFxMOsPSdY0Kx1c",
-        "value32":"asdassad asd as cgun deu"
+        "value31": "enc:zoHCMdU3YRF0cfLdNtTRXe327rrTx1Z2unlGmWFxMOsPSdY0Kx1c",
+        "value32": "asdassad asd as cgun deu"
     },
-    "value4": "enc:KBcOq2OsEoDSf5ifFaAo7ECjnD04oZhgx5dRx7IE6EFO-9Gvodyk06TQzvbFOA7oyw=="
+    "value4": "enc:KBcOq2OsEoDSf5ifFaAo7ECjnD04oZhgx5dRx7IE6EFO-9Gvodyk06TQzvbFOA7oyw==",
+    "list": ["asdasd", "asdasdasldkjh asd", 123, 123, 43234, "enc:iltv7IE8LFdJawUu5UXDEKXo6vm4_V7dUvlm6Z-7xG_U"]
     
 }
