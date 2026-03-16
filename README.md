@@ -1,3 +1,4 @@
+
 # xvault
 
 **xvault is a CLI for keeping secrets _inside_ your real config and notes files, while staying Git-friendly.**
@@ -39,7 +40,7 @@ If your main need is “keep notes/config readable while only encrypting secret 
 ### Design philosophy
 - **Explicit by default**: only values marked with `enc:` are treated as secrets.
 - **Git diffs matter**: keep secrets stored as single-line ciphertext.
-- **Stay close to real formats**: work with JSON/JSONC/YAML/.env/Markdown without forcing a rigid schema.
+- **Stay close to real formats**: work with .json, .jsonc, .yaml, .env, .md, without forcing a rigid schema.
 - **Developer UX first**: `edit` is the primary workflow; everything else supports it.
 - **Safe defaults**: prefer failing loudly over producing ambiguous output.
 
@@ -105,7 +106,7 @@ Guidelines:
 
 ## Features
 
-- **Formats**: JSON, JSONC, YAML, `.env`, Markdown
+- **Formats**: .json, .jsonc, .yaml, .env, .md
 - **Inline secret marking**: `enc:` prefix indicates secret values
 - **Single-line ciphertext** for clean Git diffs
 - **Optional variable substitution**: resolve `${VAR}` placeholders (`xvault get file.json secret_name --resolve`)
@@ -132,7 +133,7 @@ Guidelines:
 
 ### Threats it does NOT fully solve (limitations)
 - **Weak passwords**: your vault is only as strong as the password you choose. Use a strong passphrase (e.g., 12–16+ characters, preferably more).
-- **Compromised machine**: if an attacker owns your box while you edit, they can read plaintext.
+- **Compromised machine**: if an attacker owns your box while you edit, they can read memory, or use a keylogger, or inspect terminal buffers. Or if an attacker gains access to your machine, they may be able to extract the cached key from the OS key store and decrypt your vault without ever needing to wait for you to edit.
 - **Plaintext exports**: `export` can produce decrypted content. Handle it carefully (gitignore, temporary locations).
 - **OS key cache availability**: keyring/credential storage may fail in some contexts (e.g., Windows over SSH). Use `--no-cache-key` or alternative cache strategies.
 
