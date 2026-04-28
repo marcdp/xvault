@@ -528,14 +528,14 @@ class XVault():
     # resolve
     def _resolve(self, text: str) -> str:
         # resolve all values in text
-        pattern = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+        pattern = re.compile(r"\$\{var:([A-Za-z_][A-Za-z0-9_]*)\}")
         def replacer(match):
-            name = match[2:-1]
+            name = match.group(1)
             value = self._handler.getValue(text, name)
             if value is None:
                 raise ValueError(f"Unable to resolve: variable '{name}' not found")
             return str(value)
-        text = re.sub(pattern, lambda m: replacer(m.group(0)), text)
+        text = re.sub(pattern, replacer, text)
         return text
 
     # decrypt

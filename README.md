@@ -109,7 +109,7 @@ Guidelines:
 - **Formats**: .json, .jsonc, .yaml, .env, .md
 - **Inline secret marking**: `enc:` prefix indicates secret values (YAML also supports `{enc:...}`)
 - **Single-line ciphertext** for clean Git diffs
-- **Optional variable substitution**: resolve `${VAR}` placeholders (`xvault get file.json secret_name --resolve`)
+- **Optional variable substitution**: resolve `${var:VARNAME}` placeholders (`xvault get file.json secret_name --resolve`)
 - **Key caching (optional)**:
   - `unlock` stores a derived key in the OS key store
   - `lock` removes it
