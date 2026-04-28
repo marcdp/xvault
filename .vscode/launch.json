@@ -7,7 +7,7 @@
             "request": "launch",
             "console": "externalTerminal",
             "module": "xvault",
-            "args": ["export","tests/test.env", "--resolve"] 
+            "args": ["export","tests/data/test.yaml"] 
         }
     ]
 }

@@ -1,0 +1,17 @@
+{
+    "workbench.tree.indent": 20,
+    "workbench.editor.enablePreview": false,
+    "explorer.compactFolders": false,
+    "editor.minimap.enabled": false,
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/*.pyc": true,
+        "**/*.egg-info": true,
+        "**/.pytest_cache": true
+    },
+    "python.testing.pytestArgs": [
+        "tests"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
+}

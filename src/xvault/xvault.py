@@ -8,7 +8,7 @@ from dotenv import dotenv_values
 from hashlib import sha256
 from pathlib import Path
 import os
-import copy
+from keyring.errors import PasswordDeleteError
 import yaml
 import re
 from unittest import result
@@ -17,7 +17,6 @@ from typing import Optional
 import keyring
 from dprojectstools.xeditor import XEditor
 from sqlalchemy import text
-from .model import SecretEntry, SecretsMeta, SecretsStore
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from abc import abstractmethod
 
@@ -26,7 +25,6 @@ META_VARIABLE = "_xvault"  # variable name in JSON/YAML/ENV for storing meta inf
 META_VARIABLE_PREFIX = "xvault:"  # prefix for the value of META_VARIABLE, followed by base64-encoded meta JSON, e.g. "xvault:eyJjcnlwdG9fdmVyc2lvbiI6IDEsICJzYWx0IjogIjIxYWYyY2ExZGViMmRhZDgxYTAwZGJiNGQ2MDcwMWYzIiwgImNoZWNrIjogImVuYzp2MTovRUF3R0RRWHdVcXJNRUlFN1dMdFV3dEowMnpHWlczQkpMTS9BeGJBd3YvOSt3PT0ifQ=="
 META_VARIABLE_COMMENTS = "xvault meta variable (do not modify)"
 META_CHECK_VALUE = "xvault"  # known value used to validate password by trying to decrypt it, stored in "_xvault.check"
-
 KEYRING_APP_NAME = "xvault"  # keyring app name for storing unlocked keys
 ENC_PREFIX = "enc:"     # prefix used to identify encrypted values in the store, followed by version info, e.g. "enc:...."
 
@@ -408,8 +406,12 @@ class XVault():
         # lock
         canonical_path = str(self._path.resolve())
         store_id = sha256(canonical_path.encode()).hexdigest()
-        if not keyring.get_password(KEYRING_APP_NAME, store_id) is None:
-            keyring.delete_password(KEYRING_APP_NAME, store_id)
+        password = keyring.get_password(KEYRING_APP_NAME, store_id)
+        if not password is None:
+            try:
+                keyring.delete_password(KEYRING_APP_NAME, store_id)
+            except PasswordDeleteError:
+                pass
     
     def rekey(self, new_password: str):
         # rekey
@@ -532,7 +534,7 @@ class XVault():
             value = self._handler.getValue(text, name)
             if value is None:
                 raise ValueError(f"Unable to resolve: variable '{name}' not found")
-            return value
+            return str(value)
         text = re.sub(pattern, lambda m: replacer(m.group(0)), text)
         return text
 
@@ -557,6 +559,8 @@ class XVault():
             encoded_key = keyring.get_password(KEYRING_APP_NAME, store_id)
             if encoded_key:
                 self._key = base64.b64decode(encoded_key)
+        if self._meta.crypto_version not in [1]:
+            raise ValueError(f"Unable to get key: unsupported crypto version in meta: {self._meta.crypto_version}")
         if self._key is not None:
             return self._key
         if not self._password:

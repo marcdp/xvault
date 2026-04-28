@@ -59,7 +59,7 @@ Use `xvault` directly on configuration files that your applications and tooling 
 - YAML
 - md files
 
-You keep the config readable, and only encrypt the values that start with `enc:`.
+You keep the config readable, and only encrypt values marked as secrets (`enc:...`, and in YAML also `{enc:...}`).
 
 Example (`dev.env`):
 ```env
@@ -98,7 +98,7 @@ SSH_KEY_PEM_B64=enc:LS0tLS1CRUdJTiBPU...
 ```` 
 
 Guidelines:
-- Use enc: for secret values.
+- Use enc: for secret values (YAML also supports `{enc:...}`).
 - Use *_B64 variables for multi-line or binary material (PEM/PFX/PDF/PNG) encoded as base64.
 - Keep everything else (notes, procedures, logs) in plain text for excellent Git diffs and searchability.
 
@@ -107,7 +107,7 @@ Guidelines:
 ## Features
 
 - **Formats**: .json, .jsonc, .yaml, .env, .md
-- **Inline secret marking**: `enc:` prefix indicates secret values
+- **Inline secret marking**: `enc:` prefix indicates secret values (YAML also supports `{enc:...}`)
 - **Single-line ciphertext** for clean Git diffs
 - **Optional variable substitution**: resolve `${VAR}` placeholders (`xvault get file.json secret_name --resolve`)
 - **Key caching (optional)**:
