@@ -259,31 +259,6 @@ def validate(
         print(f"- {check['name']:<{width}} : {check['message']}")
     print("Status: " + result["status"])
 
-# TODO
-# x env format
-# x when edit: only reencrypt changed values
-# x validate command
-# x remove v1:
-# x create scafolding for md, xml, yaml
-# x md format
-# x yaml format
-# x get
-# x xedit editor bar bottom
-# x xedit should use fileextension as "format"
-# x xvault get file.env PATH -> should show unescaped value
-# x xvault get file.json PATH -> should show unescaped and undecoded
-# x xvault get file.yaml PATH -> should show unescaped and undecoded
-# x xedit PATH ---- over unexisting file should initialize it on save
-# x xedit search
-# x xedit ro
-# x xedit help
-# x xvault edit over unexisting file should ask for password and initialize it on save
-# x xeditor: colorize env
-# x xeditor: colorize md
-#x  xeditor: colorize json
-# replace inner variables format
-
-
 
 # main
 def main():

@@ -32,13 +32,13 @@ Most developer workflows end up with friction such as:
   `xvault` is not trying to replace that ecosystem; it focuses on **editing arbitrary files (.json, .jsonc, .env, .yml, .md)** with minimal ceremony and clean diffs.
 
 - **git-crypt** is effective for encrypting entire files transparently in Git.  
-  `xvault` takes a more explicit approach: secrets are marked with `enc:` and only those values are encrypted, keeping the rest of the document readable.
+  `xvault` takes a more explicit approach: secrets are marked with `enc:` or `${enc:...}` and only those values are encrypted, keeping the rest of the document readable.
 
 If your main need is “encrypt a whole directory of files in git”, git-crypt may be enough.  
 If your main need is “keep notes/config readable while only encrypting secret values”, `xvault` is a better fit.
 
 ### Design philosophy
-- **Explicit by default**: only values marked with `enc:` are treated as secrets.
+- **Explicit by default**: only values marked with `enc:` or `${enc:...}` are treated as secrets.
 - **Git diffs matter**: keep secrets stored as single-line ciphertext.
 - **Stay close to real formats**: work with .json, .jsonc, .yaml, .env, .md, without forcing a rigid schema.
 - **Developer UX first**: `edit` is the primary workflow; everything else supports it.
@@ -48,7 +48,7 @@ If your main need is “keep notes/config readable while only encrypting secret 
 
 ## Usage
 
-`xvault` is designed for two main workflows. Both rely on the same core idea: **keep secrets inside the files you already use**, encrypt only what you explicitly mark as secret (`enc:`), and derive/export the exact outputs when needed.
+`xvault` is designed for two main workflows. Both rely on the same core idea: **keep secrets inside the files you already use**, encrypt only what you explicitly mark as secret (`enc:` or `${enc:...}`), and derive/export the exact outputs when needed.
 
 ### 1) Application config files with embedded secrets
 
@@ -59,13 +59,14 @@ Use `xvault` directly on configuration files that your applications and tooling 
 - YAML
 - md files
 
-You keep the config readable, and only encrypt values marked as secrets (`enc:...`, and in YAML also `{enc:...}`).
+You keep the config readable, and only encrypt values marked as secrets (`enc:...` or `${enc:...}`).
 
 Example (`dev.env`):
 ```env
 DB_HOST=localhost
 DB_USER=enc:admin
 DB_PASS=enc:"my password with spaces"
+DATABASE_URL=postgres://${var:DB_USER}:${var:DB_PASS}@localhost/app
 ```
 Typical workflow:
 
@@ -98,7 +99,7 @@ SSH_KEY_PEM_B64=enc:LS0tLS1CRUdJTiBPU...
 ```` 
 
 Guidelines:
-- Use enc: for secret values (YAML also supports `{enc:...}`).
+- Use `enc:...` or `${enc:...}` for secret values.
 - Use *_B64 variables for multi-line or binary material (PEM/PFX/PDF/PNG) encoded as base64.
 - Keep everything else (notes, procedures, logs) in plain text for excellent Git diffs and searchability.
 
@@ -107,7 +108,7 @@ Guidelines:
 ## Features
 
 - **Formats**: .json, .jsonc, .yaml, .env, .md
-- **Inline secret marking**: `enc:` prefix indicates secret values (YAML also supports `{enc:...}`)
+- **Inline secret marking**: `enc:...` and `${enc:...}` indicate secret values
 - **Single-line ciphertext** for clean Git diffs
 - **Optional variable substitution**: resolve `${var:VARNAME}` placeholders (`xvault get file.json secret_name --resolve`)
 - **Key caching (optional)**:
@@ -126,7 +127,7 @@ Guidelines:
 
 ### What xvault protects against
 - Accidental commits of plaintext secrets by keeping secrets **encrypted on disk**
-- “Diff leakage”: avoids storing whole plaintext configs; only `enc:` values become ciphertext
+- “Diff leakage”: avoids storing whole plaintext configs; only `enc:...`/`${enc:...}` values become ciphertext
 - Backup leakage: encrypted vault files are safe to back up as ciphertext
 - Tampering detection: AES-GCM provides integrity/authentication for secret values (wrong key or modified ciphertext fails to decrypt)
 - By default, xvault edit uses an in-terminal editor and does not write plaintext temp files.
@@ -144,7 +145,7 @@ Guidelines:
 - Run `xvault validate` before committing.
 
 ### Example file (conceptual)
-`xvault` stores a small metadata header (e.g. `_xvault`) and secrets as `enc:` values:
+`xvault` stores a small metadata header (e.g. `_xvault`) and secrets as `enc:`/`${enc:...}` values:
 
 ```jsonc
 {
@@ -152,7 +153,8 @@ Guidelines:
   "db": {
     "host": "...",
     "user": "enc:...",
-    "password": "enc:..."
+    "password": "enc:...",
+    "url": "https://login:${enc:...}@server/path/to/resource"
   }
 }
 ```

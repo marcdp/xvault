@@ -56,6 +56,7 @@ class HandlerBase:
     @abstractmethod
     def parse(self, text: str) -> tuple[XVaultMeta, str]:
         pass
+
 class HandlerJson(HandlerBase):
     def parse(self, text: str) -> tuple[XVaultMeta, str]:
         # extract meta
@@ -84,7 +85,11 @@ class HandlerJson(HandlerBase):
         # return
         return (meta, text)
     def replace_enc_tokens(self, text: str, replacer):
-        pattern = r'' + ENC_PREFIX + '[^"\r\n]+'
+        # first replace ${enc:...} to avoid replacing enc:... inside ${...}
+        pattern = r"\$\{enc:[^}\r\n]+\}+"
+        text = re.sub(pattern, lambda m: replacer(m.group(0)), text)
+        # then replace enc:... that are not inside ${...}
+        pattern = r"(?<!\$\{)enc:[^\"\r\n]+"
         return re.sub(pattern, lambda m: replacer(m.group(0)), text)
     def detect_json_indentation(self, text: str) -> int | None:
         for line in text.splitlines():
@@ -115,6 +120,7 @@ class HandlerJson(HandlerBase):
                 return None
             value = value[key]
         return value
+    
 class HandlerJsonc(HandlerJson):
     def stringify(self, meta: XVaultMeta, text: str) -> str:
         # encode
@@ -161,8 +167,11 @@ class HandlerEnv(HandlerBase):
         # return
         return (meta, text)
     def replace_enc_tokens(self, text: str, replacer):
-        # pattern to match lines like: SECRET_KEY=enc:.... (value starts with enc: and continues until end of line or comment)        
-        pattern = r'' + ENC_PREFIX + '[^\r\n#"\']+'
+        # first replace ${enc:...} to avoid replacing enc:... inside ${...}
+        pattern = r"\$\{enc:[^}\r\n]+\}+"
+        text = re.sub(pattern, lambda m: replacer(m.group(0)), text)
+        # then replace enc:... that are not inside ${...}
+        pattern = r"(?<!\$\{)enc:[^\r\n#\"']+"
         return re.sub(pattern, lambda m: replacer(m.group(0)), text)
     def stringify(self, meta: XVaultMeta, text: str) -> str:
         # encode
@@ -205,8 +214,11 @@ class HandlerYaml(HandlerBase):
         # return
         return (meta, text)
     def replace_enc_tokens(self, text: str, replacer):
-        # pattern enc:....
-        pattern = r'' + ENC_PREFIX + '[^"\r\n]+'
+        # first replace ${enc:...} to avoid replacing enc:... inside ${...}
+        pattern = r"\$\{enc:[^}\r\n]+\}+"
+        text = re.sub(pattern, lambda m: replacer(m.group(0)), text)
+        # then replace enc:... that are not inside ${...}
+        pattern = r"(?<!\$\{)enc:[^\"\r\n]+"
         return re.sub(pattern, lambda m: replacer(m.group(0)), text)
     def stringify(self, meta: XVaultMeta, text: str) -> str:
         # encode
@@ -253,8 +265,11 @@ class HandlerMd(HandlerBase):
         # return
         return (meta, text)
     def replace_enc_tokens(self, text: str, replacer):
-        # pattern enc:....
-        pattern = r'' + ENC_PREFIX + '[^"\r\n]+'
+        # first replace ${enc:...} to avoid replacing enc:... inside ${...}
+        pattern = r"\$\{enc:[^}\r\n]+\}+"
+        text = re.sub(pattern, lambda m: replacer(m.group(0)), text)
+        # then replace enc:... that are not inside ${...}
+        pattern = r"(?<!\$\{)enc:[^\"\r\n]+"
         return re.sub(pattern, lambda m: replacer(m.group(0)), text)
     def stringify(self, meta: XVaultMeta, text: str) -> str:
         # encode
@@ -278,7 +293,6 @@ class HandlerXml(HandlerBase):
 
 # class
 class XVault():
-
 
     # ctr
     def __init__(self, path : str, password : Optional[str] = None, no_cache_key: bool = False):
@@ -323,7 +337,6 @@ class XVault():
     @property
     def path(self):
         return self._path.resolve()
-
 
     # methods
     def edit(self):
@@ -593,15 +606,25 @@ class XVault():
     def _decrypt(self, text: str, return_unprefixed_values: bool = False) -> str:
         # decrypt all values in text
         def decrypt_value(value):
-            value = value[len(ENC_PREFIX):]
-            return (ENC_PREFIX if not return_unprefixed_values else "") + self._decrypt_value(value)
+            is_wrapped = value.startswith("${") and value.endswith("}")
+            token = value[2:-1] if is_wrapped else value
+            token = token[len(ENC_PREFIX):]
+            decrypted = self._decrypt_value(token)
+            if return_unprefixed_values:
+                return decrypted
+            result = ENC_PREFIX + decrypted
+            return "${" + result + "}" if is_wrapped else result
         return self._handler.replace_enc_tokens(text, decrypt_value)
     
     def _encrypt(self, text: str) -> str:
         # encrypt all values in text
         def encrypt_value(value):
-            value = value[len(ENC_PREFIX):]
-            return ENC_PREFIX + self._encrypt_value(value)
+            is_wrapped = value.startswith("${") and value.endswith("}")
+            token = value[2:-1] if is_wrapped else value
+            token = token[len(ENC_PREFIX):]
+            encrypted = self._encrypt_value(token)
+            result = ENC_PREFIX + encrypted
+            return "${" + result + "}" if is_wrapped else result
         return self._handler.replace_enc_tokens(text, encrypt_value)
 
     def _decrypt_value(self, encrypted_value: str) -> str:

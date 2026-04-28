@@ -1,13 +1,17 @@
 {
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "name": "Python Debugger: xvault",
-            "type": "debugpy",
-            "request": "launch",
-            "console": "externalTerminal",
-            "module": "xvault",
-            "args": ["export","tests/data/test.yaml"] 
-        }
-    ]
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python Debugger: xvault",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "xvault",
+      "args": ["edit", "tests/data/test.env"],
+      "justMyCode": false,
+      "console": "externalTerminal",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      }
+    }
+  ]
 }
