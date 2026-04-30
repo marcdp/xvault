@@ -93,7 +93,7 @@ Notes and runbook steps in plain text...
 ```env
 SSH_HOST=prod-api-01.example.com
 SSH_USER=enc:admin
-SSH_PASS=enc:"my password with spaces"
+SSH_PASS=${enc:my password with spaces}
 SSH_KEY_PEM_B64=enc:LS0tLS1CRUdJTiBPU...
 ```
 ```` 

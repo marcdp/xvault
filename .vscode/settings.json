@@ -7,7 +7,9 @@
         "**/__pycache__": true,
         "**/*.pyc": true,
         "**/*.egg-info": true,
-        "**/.pytest_cache": true
+        "**/.pytest_cache": true,
+        ".venv": true,
+        "dist": true,
     },
     "python.testing.pytestArgs": [
         "tests"

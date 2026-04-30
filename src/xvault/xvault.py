@@ -390,9 +390,7 @@ class XVault():
         self._validate_password()
         key = self._get_key()
         encoded_key = base64.b64encode(key).decode()
-        canonical_path = str(self._path.resolve())
-        store_id = sha256(canonical_path.encode()).hexdigest()
-        keyring.set_password(KEYRING_APP_NAME, store_id, encoded_key)
+        keyring.set_password(self._get_keyring_store_name(), self._get_keyring_store_id(), encoded_key)
 
     def is_unlocked(self):
         # check if unlocked
@@ -406,9 +404,7 @@ class XVault():
         # check if locked
         if self._meta.check is None:
             return False  # no check value in meta, consider it as unlocked (e.g. first time setup)
-        canonical_path = str(self._path.resolve())
-        store_id = sha256(canonical_path.encode()).hexdigest()
-        encoded_key = keyring.get_password(KEYRING_APP_NAME, store_id)
+        encoded_key = keyring.get_password(self._get_keyring_store_name(), self._get_keyring_store_id())
         return encoded_key is None
     
     def is_unitialized(self):
@@ -417,12 +413,10 @@ class XVault():
     
     def lock(self):
         # lock
-        canonical_path = str(self._path.resolve())
-        store_id = sha256(canonical_path.encode()).hexdigest()
-        password = keyring.get_password(KEYRING_APP_NAME, store_id)
+        password = keyring.get_password(self._get_keyring_store_name(), self._get_keyring_store_id())
         if not password is None:
             try:
-                keyring.delete_password(KEYRING_APP_NAME, store_id)
+                keyring.delete_password(self._get_keyring_store_name(), self._get_keyring_store_id())
             except PasswordDeleteError:
                 pass
     
@@ -514,6 +508,11 @@ class XVault():
     
 
     # read/write utils
+    def _get_keyring_store_name(self):
+        return KEYRING_APP_NAME + ":" + str(self._path.resolve().as_uri())
+    def _get_keyring_store_id(self):
+        return "username"
+    
     def _load(self):        
         # text
         with open(self._path, "r", encoding="utf-8-sig") as file:
@@ -523,7 +522,6 @@ class XVault():
         # ensure no cached key for this file in keyring (if new)
         if not self._no_cache_key and self._meta.check is None:            
             self.lock()
-
 
     def _save(self):
         # save
@@ -567,9 +565,7 @@ class XVault():
         # get key, derive if not exists, or return cached
         if self._password is None and self._key is None:
             # try to get from keyring
-            canonical_path = str(self._path.resolve())
-            store_id = sha256(canonical_path.encode()).hexdigest()
-            encoded_key = keyring.get_password(KEYRING_APP_NAME, store_id)
+            encoded_key = keyring.get_password(self._get_keyring_store_name(), self._get_keyring_store_id())
             if encoded_key:
                 self._key = base64.b64decode(encoded_key)
         if self._meta.crypto_version not in [1]:
