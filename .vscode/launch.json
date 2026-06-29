@@ -6,7 +6,7 @@
       "type": "debugpy",
       "request": "launch",
       "module": "xvault",
-      "args": ["edit", "tests/data/test.env"],
+      "args": ["edit", "tests/data/test.ovpn"],
       "justMyCode": false,
       "console": "externalTerminal",
       "env": {

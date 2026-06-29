@@ -28,7 +28,6 @@ META_CHECK_VALUE = "xvault"  # known value used to validate password by trying t
 KEYRING_APP_NAME = "xvault"  # keyring app name for storing unlocked keys
 ENC_PREFIX = "enc:"     # prefix used to identify encrypted values in the store, followed by version info, e.g. "enc:...."
 
-
 # XVault meta
 class XVaultMeta():
     def __init__(self, schema_version: int, crypto_version: int, salt: str, check: Optional[str]):
@@ -287,6 +286,51 @@ class HandlerMd(HandlerBase):
 class HandlerXml(HandlerBase):
     pass
 
+class HandlerOvpn(HandlerBase):
+    def parse(self, text: str) -> tuple[XVaultMeta, str]:
+        _xvault_match = re.search(r'^#\s*' + META_VARIABLE + r'\s*=\s*(.+)$', text, re.MULTILINE)
+        _xvault_value = _xvault_match.group(1).strip() if _xvault_match else None
+        if _xvault_value is None:
+            meta = XVaultMeta(schema_version=1, crypto_version=1, salt=None, check=None)
+        elif _xvault_value.startswith(META_VARIABLE_PREFIX):
+            decoded = base64.urlsafe_b64decode(_xvault_value[len(META_VARIABLE_PREFIX):])
+            meta_json = decoded.decode()
+            meta_dict = json.loads(meta_json)
+            meta = XVaultMeta.from_dict(schema_version=1, data=meta_dict)
+            text = text.replace(f"# {META_VARIABLE_COMMENTS}\n", "")
+            text = re.sub(r'^#\s*' + META_VARIABLE + r'\s*=\s*.+\n?', "", text, count=1, flags=re.MULTILINE)
+            text = text.lstrip("\n")
+        else:
+            raise ValueError("Unable to load vault meta: invalid _xvault format")
+        return (meta, text)
+
+    def replace_enc_tokens(self, text: str, replacer):
+        pattern = r"(?m)^enc:[^\r\n]+"
+        return re.sub(pattern, lambda m: replacer(m.group(0)), text)
+
+    def stringify(self, meta: XVaultMeta, text: str) -> str:
+        _xvault = base64.urlsafe_b64encode(json.dumps(meta.to_dict()).encode()).decode()
+        result = f"# {META_VARIABLE_COMMENTS}\n"
+        result += f"# {META_VARIABLE}={META_VARIABLE_PREFIX}{_xvault}\n"
+        result += "\n"
+        result += text
+        return result
+
+    def getValue(self, text: str, path: str) -> Optional[str]:
+        # XML-like block section: <path>\ncontent\n</path>
+        block_match = re.search(r'<' + re.escape(path) + r'>\r?\n(.*?)\r?\n</' + re.escape(path) + r'>', text, re.DOTALL)
+        if block_match:
+            return block_match.group(1).strip()
+        # inline directive: path [value]
+        line_match = re.search(r'^' + re.escape(path) + r'(?:[ \t]+([^\r\n#;]+))?[ \t]*$', text, re.MULTILINE)
+        if line_match:
+            value = line_match.group(1)
+            return value.strip() if value else ""
+        return None
+
+
+
+
 
 
 
@@ -318,15 +362,17 @@ class XVault():
         elif path.endswith(".jsonc"):
             self._handler = HandlerJsonc()
         elif path.endswith(".env"):
-             self._handler = HandlerEnv()
+              self._handler = HandlerEnv()
         elif path.endswith(".yml") or path.endswith(".yaml"):
-             self._handler = HandlerYaml()
+              self._handler = HandlerYaml()
         elif path.endswith(".md"):
-             self._handler = HandlerMd()
+              self._handler = HandlerMd()
         elif path.endswith(".xml"):
-             self._handler = HandlerXml()
+              self._handler = HandlerXml()
+        elif path.endswith(".ovpn"):
+            self._handler = HandlerOvpn()
         else:
-            raise ValueError(f"Unable to open: unsupported file format: only .json, .jsonc, .env, .yml, .yaml, .md, .xml are supported: {path}")
+              raise ValueError(f"Unable to open: unsupported file format: only .json, .jsonc, .env, .yml, .yaml, .md, .xml, .ovpn are supported: {path}")
         self._handler
         self._load()
         # auto unlock
@@ -488,7 +534,7 @@ class XVault():
         except Exception as e:
             checks.append({"name": "decryp", "severity": "error", "message": f"error: {str(e)}"})
         # decrypt values
-        checks.append({"name": "decryp count", "severity": "info", "message": f"ok ({self._text.count("enc:")})"})
+        checks.append({"name": "decryp count", "severity": "info", "message": f"ok ({self._text.count('enc:')})"})
         # return
         return {
             "status": status,

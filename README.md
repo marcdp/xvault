@@ -5,7 +5,7 @@
 
 Your files remain readable and reviewable, and only the values you explicitly mark as secret are encrypted.
 
-The core idea is a **single source of truth**: store secrets, notes, and configuration together in a small set of canonical files (.json, .jsonc, .yaml, .env, .md), and let `xvault` handle safe editing, encryption, and export.
+The core idea is a **single source of truth**: store secrets, notes, and configuration together in a small set of canonical files (.json, .jsonc, .yaml, .env, .md, .ovpn), and let `xvault` handle safe editing, encryption, and export.
 
 From these files, you can **derive/export/resolve** the exact formats your tooling expects (e.g., `.env`, JSON config, certificate files) without duplicating plaintext secrets across multiple files or repositories.
 
@@ -40,7 +40,7 @@ If your main need is “keep notes/config readable while only encrypting secret 
 ### Design philosophy
 - **Explicit by default**: only values marked with `enc:` or `${enc:...}` are treated as secrets.
 - **Git diffs matter**: keep secrets stored as single-line ciphertext.
-- **Stay close to real formats**: work with .json, .jsonc, .yaml, .env, .md, without forcing a rigid schema.
+- **Stay close to real formats**: work with .json, .jsonc, .yaml, .env, .md, .ovpn, without forcing a rigid schema.
 - **Developer UX first**: `edit` is the primary workflow; everything else supports it.
 - **Safe defaults**: prefer failing loudly over producing ambiguous output.
 
@@ -107,7 +107,7 @@ Guidelines:
 
 ## Features
 
-- **Formats**: .json, .jsonc, .yaml, .env, .md
+- **Formats**: .json, .jsonc, .yaml, .env, .md, .ovpn
 - **Inline secret marking**: `enc:...` and `${enc:...}` indicate secret values
 - **Single-line ciphertext** for clean Git diffs
 - **Optional variable substitution**: resolve `${var:VARNAME}` placeholders (`xvault get file.json secret_name --resolve`)
