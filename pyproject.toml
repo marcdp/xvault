@@ -10,7 +10,7 @@ where = ["src"]
 
 [project]
 name = "xvault"
-version = "0.0.38"
+version = "0.0.39"
 license = "MIT"
 authors = [
   { name="Marc Delos", email="marcdp@dprojects.com" },
