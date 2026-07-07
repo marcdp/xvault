@@ -119,7 +119,19 @@ class HandlerJson(HandlerBase):
                 return None
             value = value[key]
         return value
-    
+    def setValue(self, text: str, path: str, value: str, encrypt: bool = True) -> str:
+        # set value
+        actual_value = f"{ENC_PREFIX}{value}" if encrypt else value
+        data = json5.loads(text)
+        keys = path.split(".")
+        target = data
+        for key in keys[:-1]:
+            if key not in target:
+                target[key] = {}
+            target = target[key]
+        target[keys[-1]] = actual_value
+        return json.dumps(data, indent=self.detect_json_indentation(text))
+
 class HandlerJsonc(HandlerJson):
     def stringify(self, meta: XVaultMeta, text: str) -> str:
         # encode
@@ -143,7 +155,10 @@ class HandlerJsonc(HandlerJson):
                 return None
             value = value[key]
         return value
-
+    def setValue(self, text: str, path: str, value: str, encrypt: bool = True) -> str:
+        # set value
+        raise NotImplementedError("setValue is not implemented for Jsonc format")
+    
 class HandlerEnv(HandlerBase):
     def parse(self, text: str) -> tuple[XVaultMeta, str]:
         _xvault_match = re.search(r'^' + META_VARIABLE + r'\s*=\s*(.+)$', text, re.MULTILINE)
@@ -186,6 +201,15 @@ class HandlerEnv(HandlerBase):
         if name not in data:
             return None
         return data[name]
+    def setValue(self, text: str, path: str, value: str, encrypt: bool = True) -> str:
+        # set value
+        actual_value = f"{ENC_PREFIX}{value}" if encrypt else value
+        pattern = r'^' + re.escape(path) + r'\s*=.*$'
+        if re.search(pattern, text, re.MULTILINE):
+            return re.sub(pattern, lambda _: f'{path}={actual_value}', text, count=1, flags=re.MULTILINE)
+        if not text.endswith('\n'):
+            text += '\n'
+        return text + f'{path}={actual_value}\n'
 
 class HandlerYaml(HandlerBase):
     def parse(self, text: str) -> tuple[XVaultMeta, str]:
@@ -233,7 +257,19 @@ class HandlerYaml(HandlerBase):
                 return None
             value = value[key]
         return value
-    
+
+    def setValue(self, text: str, path: str, value: str, encrypt: bool = True) -> str:
+        actual_value = f"{ENC_PREFIX}{value}" if encrypt else value
+        data = yaml.safe_load(text) or {}
+        keys = path.split(".")
+        target = data
+        for key in keys[:-1]:
+            if key not in target:
+                target[key] = {}
+            target = target[key]
+        target[keys[-1]] = actual_value
+        return yaml.dump(data, default_flow_style=False, allow_unicode=True)
+
 class HandlerMd(HandlerBase):
     def parse(self, text: str) -> tuple[XVaultMeta, str]:
         # extract meta from Markdown (---\n_xvault: enc:....\n---\n")
@@ -282,6 +318,7 @@ class HandlerMd(HandlerBase):
     def getValue(self, text: str, path: str) -> Optional[str]:
         # pattern to match lines like: SECRET
         raise NotImplementedError("getValue is not implemented for Markdown format")
+
     
 class HandlerXml(HandlerBase):
     pass
@@ -305,6 +342,10 @@ class HandlerOvpn(HandlerBase):
         return (meta, text)
 
     def replace_enc_tokens(self, text: str, replacer):
+        # first replace ${enc:...} to avoid replacing enc:... inside ${...}
+        pattern = r"\$\{enc:[^}\r\n]+\}+"
+        text = re.sub(pattern, lambda m: replacer(m.group(0)), text)
+        # then replace enc:... at the start of a line
         pattern = r"(?m)^enc:[^\r\n]+"
         return re.sub(pattern, lambda m: replacer(m.group(0)), text)
 
@@ -327,6 +368,26 @@ class HandlerOvpn(HandlerBase):
             value = line_match.group(1)
             return value.strip() if value else ""
         return None
+
+    def setValue(self, text: str, path: str, value: str, encrypt: bool = True) -> str:
+        if encrypt:
+            # prefix each line with enc: to mark for encryption, preserving line breaks
+            value = "\n".join(f"{ENC_PREFIX}{line}" for line in value.splitlines())
+        # XML-like block section: <path>\ncontent\n</path>
+        block_pattern = r'<' + re.escape(path) + r'>\r?\n.*?\r?\n</' + re.escape(path) + r'>'
+        if re.search(block_pattern, text, re.DOTALL):
+            replacement = f'<{path}>\n{value}\n</{path}>'
+            return re.sub(block_pattern, lambda _: replacement, text, count=1, flags=re.DOTALL)
+        # inline directive: path [value]
+        line_pattern = r'^' + re.escape(path) + r'(?:[ \t]+[^\r\n#;]*)?[ \t]*$'
+        if re.search(line_pattern, text, re.MULTILINE):
+            replacement = f'{path} {value}' if value else path
+            return re.sub(line_pattern, lambda _: replacement, text, count=1, flags=re.MULTILINE)
+        # not found: append
+        if not text.endswith('\n'):
+            text += '\n'
+        text += (f'{path} {value}' if value else path) + '\n'
+        return text
 
 
 
@@ -407,6 +468,15 @@ class XVault():
             text = self._resolve(text)
         # get value
         return self._handler.getValue(text, name)
+
+    def set(self, name: str, value: str, encrypt:bool = True):
+        # get value
+        text = self._text
+        # set value
+        text = self._handler.setValue(text, name, value, encrypt)
+        # encrypt and save
+        self._text = text
+        self._save( )
 
     def export(self, resolve: bool = False) -> str:
         # decrypt

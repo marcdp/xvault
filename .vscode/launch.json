@@ -6,7 +6,19 @@
       "type": "debugpy",
       "request": "launch",
       "module": "xvault",
-      "args": ["edit", "tests/data/test.ovpn"],
+      "args": ["edit", "tests/data/test.md"],
+      "justMyCode": false,
+      "console": "externalTerminal",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      }
+    },
+    {
+      "name": "Python Debugger: xvault 2",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "xvault",
+      "args": ["set", "tests/data/test.ovpn", "auth-user-pass", "Lorem\nIpsum"],
       "justMyCode": false,
       "console": "externalTerminal",
       "env": {

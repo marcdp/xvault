@@ -68,7 +68,7 @@ def edit(
 
 
 
-# show
+# get
 @command("Get value from file", examples=[
     "xvault get ./dev.json VAR1",
     "xvault get ./dev.yaml DB.VAR2",
@@ -97,6 +97,32 @@ def get(
         return -1
     print(value)
 
+# set
+@command("Set value in file", examples=[
+    "xvault set ./dev.json VAR1 value1",
+    "xvault set ./dev.yaml DB.VAR2 value2",
+])
+def set(
+        path: Annotated[str,  Argument("PATH")],
+        key: Annotated[str,  Argument("KEY")],
+        value: Annotated[str,  Argument("VALUE")], 
+        no_encrypt: Annotated[bool,  Flag('e', "no-encrypt")] = False,
+        no_cache_key: Annotated[bool,  Flag('n', "no-cache-key")] = False
+    ):
+    # validate
+    if not os.path.exists(path):
+        error(f"File '{path}' not found.")
+        return -1
+    # ask for password if interactive and not provided
+    password = None
+    if no_cache_key or XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
+        password = ask_password()
+    # create instance
+    xvault = XVault(path, password = password, no_cache_key = no_cache_key)
+    # action
+    xvault.set(key, value, encrypt = not no_encrypt)
+    # print
+    print(f"Key '{key}' set to '{value}'.")
 
 # version
 @command("Show xvault version", alias=["version"], examples=[
