@@ -23,7 +23,7 @@ from abc import abstractmethod
 # consts
 META_VARIABLE = "_xvault"  # variable name in JSON/YAML/ENV for storing meta info
 META_VARIABLE_PREFIX = "xvault:"  # prefix for the value of META_VARIABLE, followed by base64-encoded meta JSON, e.g. "xvault:eyJjcnlwdG9fdmVyc2lvbiI6IDEsICJzYWx0IjogIjIxYWYyY2ExZGViMmRhZDgxYTAwZGJiNGQ2MDcwMWYzIiwgImNoZWNrIjogImVuYzp2MTovRUF3R0RRWHdVcXJNRUlFN1dMdFV3dEowMnpHWlczQkpMTS9BeGJBd3YvOSt3PT0ifQ=="
-META_VARIABLE_COMMENTS = "xvault metadata. To edit this file use: pip install -e xvault; xvault edit <file>;"  # comments to indicate the purpose of META_VARIABLE, used in JSON/YAML/ENV
+META_VARIABLE_COMMENTS = "xvault metadata. To view/edit secrets in this file use: pip install -e xvault; xvault edit <file>;"  # comments to indicate the purpose of META_VARIABLE, used in JSON/YAML/ENV
 META_CHECK_VALUE = "xvault"  # known value used to validate password by trying to decrypt it, stored in "_xvault.check"
 KEYRING_APP_NAME = "xvault"  # keyring app name for storing unlocked keys
 ENC_PREFIX = "enc:"     # prefix used to identify encrypted values in the store, followed by version info, e.g. "enc:...."

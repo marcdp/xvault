@@ -10,13 +10,13 @@ where = ["src"]
 
 [project]
 name = "xvault"
-version = "0.0.44"
+version = "0.0.45"
 license = "MIT"
 authors = [
   { name="Marc Delos", email="marcdp@dprojects.com" },
 ]
 dependencies = [
-    "dprojectstools>=0.0.37",
+    "dprojectstools>=0.0.38",
     "argon2-cffi>=25.1.0",
     "python-dotenv>=1.2.2",
     "keyring>=25.6.0",
