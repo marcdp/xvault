@@ -8,6 +8,7 @@ from dotenv import dotenv_values
 from hashlib import sha256
 from pathlib import Path
 import os
+import tempfile
 from keyring.errors import PasswordDeleteError
 import yaml
 import re
@@ -382,6 +383,15 @@ class HandlerOvpn(HandlerBase):
             return re.sub(block_pattern, lambda _: replacement, text, count=1, flags=re.DOTALL)
         # inline directive: path [value]
         line_pattern = r'^' + re.escape(path) + r'(?:[ \t]+[^\r\n#;]*)?[ \t]*$'
+        if "\n" in value:
+            replacement = f'<{path}>\n{value}\n</{path}>'
+            if re.search(line_pattern, text, re.MULTILINE):
+                return re.sub(line_pattern, lambda _: replacement, text, count=1, flags=re.MULTILINE)
+            if not text.endswith('\n'):
+                text += '\n'
+            return text + replacement + '\n'
+        if encrypt and value:
+            value = "${" + value + "}"
         if re.search(line_pattern, text, re.MULTILINE):
             replacement = f'{path} {value}' if value else path
             return re.sub(line_pattern, lambda _: replacement, text, count=1, flags=re.MULTILINE)
@@ -472,13 +482,18 @@ class XVault():
         return self._handler.getValue(text, name)
 
     def set(self, name: str, value: str, encrypt:bool = True):
-        # get value
-        text = self._text
+        # Encrypt only the incoming value. Encrypting the complete document here
+        # would encrypt ciphertext already present in other fields a second time.
+        if encrypt:
+            if isinstance(self._handler, HandlerOvpn):
+                value = "\n".join(self._encrypt_value(line) for line in value.splitlines())
+            else:
+                value = self._encrypt_value(value)
         # set value
-        text = self._handler.setValue(text, name, value, encrypt)
-        # encrypt and save
+        text = self._handler.setValue(self._text, name, value, encrypt)
+        # save
         self._text = text
-        self._save( )
+        self._save()
 
     def export(self, resolve: bool = False) -> str:
         # decrypt
@@ -565,19 +580,21 @@ class XVault():
     def validate(self):
         # format
         checks = []
-        status = "ok"
         # check file format
         checks.append({"name": "parse", "severity": "info","message": f"ok ({self._path.suffix})"})
         # check salt
         if not self._meta.salt:
             checks.append({"name": "salt", "severity": "error", "message": f"missing"})
-        else:   
-            checks.append({"name": "salt", "severity": "info", "message": f"ok"})
-            salt_raw = bytes.fromhex(self._meta.salt)
-            if len(salt_raw) != 16:
-                checks.append({"name": "salt-length", "severity": "error", "message": f"invalid length ({len(salt_raw)} bytes), expected 16 bytes"})
-            else:
-                checks.append({"name": "salt-length", "severity": "info", "message": f"ok ({len(salt_raw)} bytes)"})
+        else:
+            try:
+                salt_raw = bytes.fromhex(self._meta.salt)
+                checks.append({"name": "salt", "severity": "info", "message": f"ok"})
+                if len(salt_raw) != 16:
+                    checks.append({"name": "salt-length", "severity": "error", "message": f"invalid length ({len(salt_raw)} bytes), expected 16 bytes"})
+                else:
+                    checks.append({"name": "salt-length", "severity": "info", "message": f"ok ({len(salt_raw)} bytes)"})
+            except (TypeError, ValueError):
+                checks.append({"name": "salt", "severity": "error", "message": "invalid hexadecimal value"})
         # check check
         if not self._meta.check:
             checks.append({"name": "check", "severity": "error", "message": f"missing"})
@@ -591,14 +608,14 @@ class XVault():
         else:
             checks.append({"name": "status", "severity": "info", "message": f"ok (unlocked)"})
         # validate password
-        if not self._no_cache_key:
+        if not self._no_cache_key and self.is_locked():
             checks.append({"name": "password-validation", "severity": "info", "message": f"unknown"})
-        elif self.is_unlocked():
+        else:
             try:
                 self._validate_password()
                 checks.append({"name": "password-validation", "severity": "info", "message": f"ok"})
-            except Exception as e:
-                checks.append({"name": "password-validation", "severity": "error", "message": f"invalid password: {str(e)}"})
+            except Exception:
+                checks.append({"name": "password-validation", "severity": "error", "message": "invalid password"})
         # decrypt
         try:
             self._decrypt(self._text)
@@ -607,6 +624,8 @@ class XVault():
             checks.append({"name": "decryp", "severity": "error", "message": f"error: {str(e)}"})
         # decrypt values
         checks.append({"name": "decryp count", "severity": "info", "message": f"ok ({self._text.count('enc:')})"})
+        severities = {check["severity"] for check in checks}
+        status = "error" if "error" in severities else "warning" if "warning" in severities else "ok"
         # return
         return {
             "status": status,
@@ -650,9 +669,25 @@ class XVault():
         result = self._handler.stringify(self._meta, self._text)
         if not result.endswith("\n"):
             result += "\n"
-        # write
-        with open(self._path, "w", encoding="utf-8") as file:
-            file.write(result)
+        # write atomically so an interrupted save cannot truncate the vault
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=self._path.parent,
+                prefix=f".{self._path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as file:
+                temp_path = Path(file.name)
+                file.write(result)
+            os.chmod(temp_path, self._path.stat().st_mode)
+            os.replace(temp_path, self._path)
+        except Exception:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
+            raise
 
     # resolve
     def _resolve(self, text: str) -> str:

@@ -40,7 +40,7 @@ URL=https://user:${enc:plain-value-before-edit}@example.test/db
 
 Marker matching is textual, not a general parser. Marker content must be nonempty and single-line. In JSON, JSONC, YAML, and Markdown, an unwrapped marker stops at a double quote or line break. In ENV it also stops at `#` or a single quote. In OpenVPN, unwrapped `enc:` values are recognized only at the start of a line; wrapped markers may appear inline. Delimiters inside a secret therefore require the wrapped form where it is supported, or a format-safe representation such as base64.
 
-`set` currently writes `enc:plaintext` but does not run that new value through encryption. Save a subsequent `edit` before considering it encrypted.
+`set` encrypts the supplied value before saving it and keeps the `enc:` marker on disk. With `--no-encrypt`, it intentionally stores the supplied value without a marker as plaintext.
 
 ## Variable references
 
@@ -102,7 +102,7 @@ ${enc:password}
 </auth-user-pass>
 ```
 
-When an OpenVPN value is set with encryption, each supplied line receives an `enc:` marker. This permits line-oriented material, but each line is encrypted independently on a later edit/save.
+When an OpenVPN value is set with encryption, each supplied line is encrypted independently and receives an `enc:` marker. This preserves line-oriented material without re-encrypting other values in the profile.
 
 ## Compatibility and limits
 

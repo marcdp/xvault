@@ -4,6 +4,7 @@ xvault keeps secrets inline in the configuration files and Markdown notes you al
 
 It is a local-first, Git-friendly tool: the same file can hold configuration, notes, and encrypted values, rather than splitting them across a vault and a separate configuration file.
 
+
 ## Why xvault?
 
 - Keep a single source of truth for configuration and notes.

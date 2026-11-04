@@ -42,7 +42,6 @@ xvault aims to keep explicitly marked values encrypted at rest in a readable, Gi
 - An attacker who can use or extract an unlocked OS-keyring entry.
 - Plaintext written by `get`, `export`, terminal scrollback, or redirected output.
 - Integrity or confidentiality of unmarked file content, metadata placement, file names, or the overall file structure. AES-GCM has no associated data in this implementation.
-- New plaintext written by `set` before it is subsequently processed by `edit` and saved.
 
 Use a strong unique passphrase, keep working copies on trusted machines, use `--no-cache-key` where appropriate, and inspect output and Git diffs. xvault has not been represented here as independently security audited.
 

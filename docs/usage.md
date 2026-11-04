@@ -73,11 +73,10 @@ xvault get dev.env DATABASE_URL --resolve
 xvault set PATH KEY VALUE [--no-encrypt] [--no-cache-key]
 ```
 
-Sets a value in JSON, YAML, ENV, or OpenVPN files. By default it writes an `enc:` marker; `--no-encrypt` (`-e`) writes a plain value. **Current behavior:** `set` writes the marker and saves metadata, but does not encrypt the newly written plaintext itself. Run `edit` and save before committing a value written with the default option.
+Sets a value in JSON, YAML, ENV, or OpenVPN files. By default the new value is encrypted immediately and saved with its `enc:` marker. `--no-encrypt` (`-e`) intentionally writes the supplied value as plaintext.
 
 ```bash
 xvault set dev.env DB_PASS 'new-password'
-xvault edit dev.env
 ```
 
 JSONC and Markdown do not implement `set`.
@@ -113,6 +112,8 @@ xvault validate PATH [--verbose] [--no-cache-key]
 ```
 
 Loads the file and reports parser, metadata, lock-status, and decryption checks. `--verbose` (`-v`) is accepted by the CLI; the current command output does not vary by that flag.
+
+The overall status is `error` if any check is an error, `warning` if there are warnings but no errors, and `ok` otherwise. `ok` and `warning` exit with code 0; `error` exits nonzero.
 
 ```bash
 xvault validate dev.env --no-cache-key
@@ -187,6 +188,6 @@ Some keyring backends are unavailable or unsuitable in SSH, CI, container, WSL, 
 
 ## Common workflows
 
-For Git-managed application configuration, edit the canonical file with `xvault edit`, review that values on disk are ciphertext, and run `validate` before committing. For password rotation, update the marked value with `edit` and save, or use `set` followed by `edit` and save. Use `rekey` when rotating the vault password.
+For Git-managed application configuration, edit the canonical file with `xvault edit`, review that values on disk are ciphertext, and run `validate` before committing. For password rotation, update the marked value with `edit` and save or use `set`, which encrypts the replacement immediately. Use `rekey` when rotating the vault password.
 
 For an OpenVPN profile, store credentials in an `<auth-user-pass>` block or other supported directive, edit it with xvault, and export a decrypted profile only to the process that needs it. The encrypted source can remain in Git; the exported profile must not.

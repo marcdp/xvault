@@ -122,7 +122,7 @@ def set(
     # action
     xvault.set(key, value, encrypt = not no_encrypt)
     # print
-    print(f"Key '{key}' set to '{value}'.")
+    print(f"Key '{key}' updated.")
 
 # version
 @command("Show xvault version", alias=["version"], examples=[
@@ -284,6 +284,8 @@ def validate(
     for check in result["checks"]:
         print(f"- {check['name']:<{width}} : {check['message']}")
     print("Status: " + result["status"])
+    if result["status"] == "error":
+        return -1
 
 
 # main
@@ -291,7 +293,9 @@ def main():
     commandsManager = CommandsManager()
     commandsManager.register(module = sys.modules[__name__])
     try:
-        commandsManager.execute(sys.argv, default_show_help = True)
+        result = commandsManager.execute(sys.argv, default_show_help = True)
+        if isinstance(result, int) and result != 0:
+            sys.exit(1)
     except cryptography.exceptions.InvalidTag as ee:
         raise
     except Exception as e:        
