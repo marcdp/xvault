@@ -77,32 +77,8 @@ class XVault():
         if self._meta is not None:
             self._crypto = self._create_crypto(password)
         # auto unlock
-        if not self._no_cache_key and self._password:
+        if not self._no_cache_key and password:
             self.unlock()
-
-    @property
-    def _key(self):
-        return self._crypto._key if self._crypto is not None else None
-
-    @_key.setter
-    def _key(self, value):
-        self._get_crypto()._key = value
-
-    @property
-    def _password(self):
-        return self._crypto._password if self._crypto is not None else None
-
-    @_password.setter
-    def _password(self, value):
-        self._get_crypto()._password = value
-
-    @property
-    def _cache(self):
-        return self._crypto._cache if self._crypto is not None else {}
-
-    @_cache.setter
-    def _cache(self, value):
-        self._get_crypto()._cache = value
 
     # property
     @property

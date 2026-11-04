@@ -32,6 +32,56 @@ def test_crypto_v1_validates_metadata_check_value():
     crypto.validate_password()
 
 
+def test_crypto_v1_caches_the_derived_key():
+    meta = XVaultMeta(1, crypto_version=1, salt="22" * 16, check=None)
+    crypto = CryptoV1(meta, password="test-password", key_deriver=fast_deriver)
+
+    first_key = crypto.get_key()
+
+    assert crypto.get_key() is first_key
+
+
+def test_crypto_v1_derives_the_same_key_for_the_same_password_and_salt():
+    meta = XVaultMeta(1, crypto_version=1, salt="23" * 16, check=None)
+    first = CryptoV1(meta, password="test-password", key_deriver=fast_deriver)
+    second = CryptoV1(meta, password="test-password", key_deriver=fast_deriver)
+
+    assert first.get_key() == second.get_key()
+
+
+def test_crypto_v1_loads_an_existing_key_from_keyring():
+    meta = XVaultMeta(1, crypto_version=1, salt="33" * 16, check=None)
+    original = CryptoV1(meta, password="test-password", key_deriver=fast_deriver)
+    encoded_key = base64.b64encode(original.get_key()).decode()
+    crypto = CryptoV1(meta, cached_key_loader=lambda: encoded_key)
+
+    assert crypto.get_key() == original.get_key()
+
+
+def test_crypto_v1_reuses_ciphertext_after_decryption():
+    meta = XVaultMeta(1, crypto_version=1, salt="44" * 16, check=None)
+    crypto = CryptoV1(meta, password="test-password", key_deriver=fast_deriver)
+    encrypted = crypto.encrypt("secret value")
+
+    assert crypto.decrypt(encrypted) == "secret value"
+    assert crypto.encrypt("secret value") == encrypted
+
+
+def test_crypto_v1_replaces_password_and_clears_ciphertext_cache():
+    meta = XVaultMeta(1, crypto_version=1, salt="55" * 16, check=None)
+    crypto = CryptoV1(meta, password="old-password", key_deriver=fast_deriver)
+    old_key = crypto.get_key()
+    old_encrypted = crypto.encrypt("secret value")
+    assert crypto.decrypt(old_encrypted) == "secret value"
+
+    crypto.replace_password("new-password")
+    new_encrypted = crypto.encrypt("secret value")
+
+    assert crypto.get_key() != old_key
+    assert new_encrypted != old_encrypted
+    assert crypto.decrypt(new_encrypted) == "secret value"
+
+
 def test_xvault_selects_v1_and_rejects_an_unsupported_crypto_version(tmp_path, monkeypatch):
     monkeypatch.setattr("xvault.xvault.hash_secret_raw", fast_deriver)
     path = tmp_path / "vault.env"

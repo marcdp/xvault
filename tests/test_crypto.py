@@ -117,15 +117,13 @@ class TestKeyDerivation:
         bytes.fromhex(vault_initialized._meta.salt)
 
     def test_derive_key_consistency(self, temp_vault_env, password):
-        """Test that same password + salt always derives same key."""
+        """Test that a saved vault can be reopened with the same password."""
         vault1 = XVault(temp_vault_env, password=password)
-        key1 = vault1._get_key()
+        vault1.set("SECRET", "secret value")
+
+        vault2 = XVault(temp_vault_env, password=password, no_cache_key=True)
         
-        # Clear key and password to force re-derivation
-        vault1._key = None
-        key2 = vault1._get_key()
-        
-        assert key1 == key2
+        assert vault2.get("SECRET") == "secret value"
 
     def test_derive_key_different_passwords(self, temp_vault_env):
         """Test that different passwords derive different keys."""
@@ -170,19 +168,14 @@ class TestKeyDerivation:
         with pytest.raises(ValueError, match="unsupported crypto version"):
             vault._get_key()
 
-    def test_derive_key_retrieves_from_keyring(self, monkeypatch, temp_vault_env, password):
-        """Test that key can be retrieved from keyring cache."""
+    def test_derive_key_retrieves_from_keyring(self, temp_vault_env, password):
+        """Test that a reopened vault can use the keyring-cached key."""
         vault = XVault(temp_vault_env, password=password)
-        original_key = vault._get_key()
-        
-        # Simulate locked vault with key in keyring
-        vault._key = None
-        vault._password = None
-        encoded_key = base64.b64encode(original_key).decode()
-        monkeypatch.setattr("keyring.get_password", lambda *args, **kwargs: encoded_key)
-        
-        retrieved_key = vault._get_key()
-        assert retrieved_key == original_key
+        vault.set("SECRET", "secret value")
+
+        reopened = XVault(temp_vault_env)
+
+        assert reopened.get("SECRET") == "secret value"
 
 
 # ============================================================================
@@ -241,10 +234,6 @@ class TestEncryption:
         """Test that each encryption generates random nonce."""
         plaintext = "same_plaintext"
         encrypted1 = vault_initialized._encrypt_value(plaintext)
-        
-        # Clear cache to force new encryption
-        vault_initialized._cache.clear()
-        
         encrypted2 = vault_initialized._encrypt_value(plaintext)
         
         # Same plaintext should produce different ciphertexts
@@ -267,23 +256,16 @@ class TestEncryption:
         assert encrypted1 != encrypted2
 
     def test_encrypt_cache_cleared_on_key_change(self, temp_vault_env):
-        """Test that cache is cleared when key changes."""
+        """Test that rekeying does not reuse ciphertext from the old key."""
         vault = XVault(temp_vault_env, password="password1")
-        key1 = vault._get_key()
-        
-        encrypted1 = vault._encrypt_value("test")
-        
-        # Simulate key derivation with new password (cache should clear)
-        vault._password = "password2"
-        vault._key = None
-        vault._cache = {}
-        
-        key2 = vault._get_key()
-        encrypted2 = vault._encrypt_value("test")
-        
-        # Different keys should produce different ciphertexts
-        assert key1 != key2
+        vault.set("SECRET", "test")
+        encrypted1 = Path(temp_vault_env).read_text(encoding="utf-8")
+
+        vault.rekey("password2")
+        encrypted2 = Path(temp_vault_env).read_text(encoding="utf-8")
+
         assert encrypted1 != encrypted2
+        assert vault.get("SECRET") == "test"
 
     def test_encrypt_empty_string(self, vault_initialized):
         """Test encrypting empty string."""
@@ -389,15 +371,11 @@ class TestDecryption:
             vault_initialized._decrypt_value(invalid_encrypted)
 
     def test_decrypt_updates_cache(self, vault_initialized):
-        """Test that decryption stores result in cache."""
+        """Test that decrypting enables ciphertext reuse for the plaintext."""
         encrypted = vault_initialized._encrypt_value("secret_value")
-        vault_initialized._cache.clear()
-        
-        decrypted = vault_initialized._decrypt_value(encrypted)
-        
-        # Result should be cached
-        assert "secret_value" in vault_initialized._cache
-        assert vault_initialized._cache["secret_value"] == encrypted
+
+        assert vault_initialized._decrypt_value(encrypted) == "secret_value"
+        assert vault_initialized._encrypt_value("secret_value") == encrypted
 
     def test_decrypt_empty_string_round_trip(self, vault_initialized):
         """Test decrypting empty string."""
