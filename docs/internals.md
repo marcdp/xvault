@@ -4,7 +4,7 @@
 
 xvault is a small Python package with one public class, `XVault`, and a CLI entry point in `xvault.__main__`. The CLI constructs `XVault` for a file and delegates editing, lookup, export, validation, locking, and rekeying to it.
 
-`xvault.xvault` selects a handler from the filename extension. `xvault.meta` contains the shared metadata representation and constants, while `xvault.handlers` contains the base interface and one module per supported format. A handler reads and writes metadata, finds secret markers, and—in formats that implement it—looks up or sets values. `XVault` owns key derivation, encryption, decryption, variable resolution, and OS-keyring access. Editing uses `XEditor` from the `dprojectstools` dependency to present decrypted text in the terminal.
+`xvault.xvault` selects a handler from the filename extension and orchestrates file operations, marker processing, variable resolution, and OS-keyring access. `xvault.meta` contains the shared metadata representation and constants, while `xvault.handlers` contains the base interface and one module per supported format. A handler reads and writes metadata, finds secret markers, and—in formats that implement it—looks up or sets values. `xvault.crypto.v1` owns the version 1 key lifecycle and value-level encryption: Argon2id derivation, AES-GCM encryption and decryption, password validation, and ciphertext reuse. `xvault.crypto.base` is the small interface used for that delegation. Editing uses `XEditor` from the `dprojectstools` dependency to present decrypted text in the terminal.
 
 The handler modules are `json`, `jsonc`, `yaml`, `env`, `markdown`, and `ovpn`. Handler classes and metadata names remain re-exported from `xvault.xvault` for compatibility with existing Python imports.
 
@@ -13,7 +13,9 @@ flowchart LR
   F[Vault file] --> H[Format handler]
   H --> X[XVault]
   X --> E[decrypt/edit/encrypt]
-  X --> K[Argon2id key and OS keyring]
+  X --> K[OS keyring]
+  X --> C[CryptoV1]
+  C --> A[Argon2id key and AES-GCM]
   E --> F
 ```
 

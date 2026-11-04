@@ -6,8 +6,7 @@ import re
 import tempfile
 from typing import Optional
 
-from argon2.low_level import hash_secret_raw, Type
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from argon2.low_level import hash_secret_raw
 from dprojectstools.xeditor import XEditor
 import keyring
 from keyring.errors import PasswordDeleteError
@@ -30,6 +29,7 @@ from .meta import (
     META_VARIABLE_PREFIX,
     XVaultMeta,
 )
+from .crypto import CryptoBase, CryptoV1
 
 
 KEYRING_APP_NAME = "xvault"  # keyring app name for storing unlocked keys
@@ -61,26 +61,48 @@ class XVault():
         # validate
         if not self._path.exists():
             raise ValueError(f"Unable to open: path not found: {path}")
-        # password
-        self._password = password
-        # key
-        self._key = None
         # no cache key
         self._no_cache_key = no_cache_key
-        if self._no_cache_key and self._password is None:
+        if self._no_cache_key and password is None:
             raise ValueError("Unable to open: no_cache_key option requires password to be provided")
         # load
         self._text = None
         self._meta = None
-        self._cache = {}
+        self._crypto: Optional[CryptoBase] = None
         handler_class = HANDLERS.get(self._path.suffix)
         if handler_class is None:
             raise ValueError(f"Unable to open: unsupported file format: only .json, .jsonc, .env, .yml, .yaml, .md, .ovpn are supported: {path}")
         self._handler = handler_class()
         self._load()
+        if self._meta is not None:
+            self._crypto = self._create_crypto(password)
         # auto unlock
         if not self._no_cache_key and self._password:
             self.unlock()
+
+    @property
+    def _key(self):
+        return self._crypto._key if self._crypto is not None else None
+
+    @_key.setter
+    def _key(self, value):
+        self._get_crypto()._key = value
+
+    @property
+    def _password(self):
+        return self._crypto._password if self._crypto is not None else None
+
+    @_password.setter
+    def _password(self, value):
+        self._get_crypto()._password = value
+
+    @property
+    def _cache(self):
+        return self._crypto._cache if self._crypto is not None else {}
+
+    @_cache.setter
+    def _cache(self, value):
+        self._get_crypto()._cache = value
 
     # property
     @property
@@ -191,13 +213,12 @@ class XVault():
         # decrypt with old key
         decrypted_text = self._decrypt(self._text)
         # clear old key from memory and keyring
-        self._key = None
         self._meta.check = None
         self._meta.check = None
         if not self._no_cache_key:
             self.lock()
         # set new password and derive new key
-        self._password = new_password
+        self._get_crypto().replace_password(new_password)
         key = self._get_key()
         # encrypt with new key
         self._text = self._encrypt(decrypted_text)
@@ -279,6 +300,28 @@ class XVault():
         return KEYRING_APP_NAME + ":" + str(self._path.resolve().as_uri())
     def _get_keyring_store_id(self):
         return "username"
+
+    def _create_crypto(self, password: Optional[str]) -> Optional[CryptoBase]:
+        if self._meta.crypto_version == 1:
+            # Passing the module binding preserves compatibility with callers that
+            # monkeypatch xvault.xvault.hash_secret_raw.
+            return CryptoV1(
+                self._meta,
+                password=password,
+                cached_key_loader=lambda: keyring.get_password(
+                    self._get_keyring_store_name(), self._get_keyring_store_id()
+                ),
+                key_deriver=hash_secret_raw,
+            )
+        return None
+
+    def _get_crypto(self) -> CryptoBase:
+        if self._crypto is None:
+            raise ValueError(
+                f"Unable to get key: unsupported crypto version in meta: "
+                f"{self._meta.crypto_version}"
+            )
+        return self._crypto
     
     def _load(self):        
         # text
@@ -334,53 +377,13 @@ class XVault():
 
     # decrypt
     def _validate_password(self):
-        # try to decrypt meta.check to validate password
+        # Preserve the uninitialized-vault shortcut before selecting crypto.
         if not self._meta.check:
-            return  # no check value, skip validation (e.g. first time setup)
-        try:
-            value = self._decrypt_value(self._meta.check)
-        except Exception as e:
-            raise ValueError("Unable to validate password: invalid password") from e
-        if value != META_CHECK_VALUE:
-            raise ValueError("Unable to validate password: invalid password")
+            return
+        self._get_crypto().validate_password()
    
     def _get_key(self):
-        # get key, derive if not exists, or return cached
-        if self._password is None and self._key is None:
-            # try to get from keyring
-            encoded_key = keyring.get_password(self._get_keyring_store_name(), self._get_keyring_store_id())
-            if encoded_key:
-                self._key = base64.b64decode(encoded_key)
-        if self._meta.crypto_version not in [1]:
-            raise ValueError(f"Unable to get key: unsupported crypto version in meta: {self._meta.crypto_version}")
-        if self._key is not None:
-            return self._key
-        if not self._password:
-            raise ValueError("Unable to get key: store is locked. Password required.")
-        if self._key is None:
-            # derive the key
-            if not self._meta.salt:
-                self._meta.salt = os.urandom(16).hex()        
-            if self._meta.crypto_version == 1:
-                # v1: argon2id + AES-256
-                self._key = hash_secret_raw(
-                    secret      = self._password.encode(),
-                    salt        = bytes.fromhex(self._meta.salt),
-                    time_cost   = 5,
-                    memory_cost = 131072,  # 128Mb
-                    parallelism = 4,
-                    hash_len    = 32,
-                    type        = Type.ID
-                )
-            else:
-                raise ValueError(f"Unable to derive key: unsupported crypto version in meta: {self._meta.crypto_version}")            
-            
-        # clear password from memory
-        self._password = None
-        # clear cache from memory
-        self._cache = {}
-        # return
-        return self._key
+        return self._get_crypto().get_key()
     
     def _decrypt(self, text: str, return_unprefixed_values: bool = False) -> str:
         # decrypt all values in text
@@ -407,44 +410,8 @@ class XVault():
         return self._handler.replace_enc_tokens(text, encrypt_value)
 
     def _decrypt_value(self, encrypted_value: str) -> str:
-        # decrypt text value
-        key = self._get_key()
-        if self._meta.crypto_version == 1:
-            # schema 1: AES-GCM with random nonce
-            encrypted_blob = base64.urlsafe_b64decode(encrypted_value)
-            nonce = encrypted_blob[:12]
-            ciphertext = encrypted_blob[12:]
-            aesgcm = AESGCM(key)
-            plaintext_bytes = aesgcm.decrypt(
-                nonce,
-                ciphertext,
-                None
-            )
-            result = plaintext_bytes.decode("utf-8")            
-            self._cache[result] = encrypted_value
-            return result
-        # error
-        raise ValueError("Unable to decrypt: invalid crypto version")
+        return self._get_crypto().decrypt(encrypted_value)
     
     def _encrypt_value(self, value: str) -> str:
-        # encrypt value
-        key = self._get_key()
-        if value in self._cache:
-            return self._cache[value]
-        if self._meta.crypto_version == 1:
-            # scheme 1: AES-GCM with random nonce
-            aesgcm = AESGCM(key)
-            nonce = os.urandom(12)  # 96-bit nonce (recommended for GCM)
-            plaintext_bytes = value.encode("utf-8")
-            ciphertext = aesgcm.encrypt(
-                nonce,
-                plaintext_bytes,
-                None  # optional associated data
-            )
-            # Store nonce + ciphertext together
-            encrypted_blob = nonce + ciphertext
-            # Encode to base64 so it fits in JSON
-            return base64.urlsafe_b64encode(encrypted_blob).decode("utf-8")
-        # error
-        raise ValueError("Unable to encrypt: invalid crypto version")
+        return self._get_crypto().encrypt(value)
 
