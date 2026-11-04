@@ -16,7 +16,7 @@ pip install -e .
 python -m xvault version
 ```
 
-xvault requires Python 3.10 or later. Its runtime dependencies are installed with the package.
+xvault requires Python 3.11 or later. Its runtime dependencies are installed with the package.
 
 ## Quick start
 
@@ -157,7 +157,7 @@ Prints the installed package version.
 
 JSON and JSONC support reading and editing; JSON uses dot-separated object paths for `get` and `set`, while JSONC supports `get` but not `set`. YAML has the same dot-path convention. ENV uses `NAME=value` entries. Markdown is for editing encrypted inline text and fenced configuration; it does not support key lookup or `set`. OpenVPN supports normal directives and `<name>...</name>` blocks for `get` and `set`.
 
-The exact metadata location, marker matching rules, and syntax limitations are specified in [reference.md](reference.md). xvault's constructor recognizes `.xml`, but there is no implemented XML handler; do not use XML as a vault format.
+The exact metadata location, marker matching rules, and syntax limitations are specified in [reference.md](reference.md). There is no implemented XML handler; XML is not a supported vault format.
 
 ## Personal Markdown vaults
 

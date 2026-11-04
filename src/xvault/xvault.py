@@ -1,411 +1,54 @@
-from ast import pattern
 import base64
-import json
-from io import StringIO
-from pydoc import resolve
-import json5
-from dotenv import dotenv_values
 from hashlib import sha256
 from pathlib import Path
 import os
-import tempfile
-from keyring.errors import PasswordDeleteError
-import yaml
 import re
-from unittest import result
-from argon2.low_level import hash_secret_raw, Type
+import tempfile
 from typing import Optional
-import keyring
-from dprojectstools.xeditor import XEditor
-from sqlalchemy import text
+
+from argon2.low_level import hash_secret_raw, Type
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from abc import abstractmethod
+from dprojectstools.xeditor import XEditor
+import keyring
+from keyring.errors import PasswordDeleteError
 
-# consts
-DEFAULT_VERSION = "1"
-META_VARIABLE = "_xvault"  # variable name in JSON/YAML/ENV for storing meta info
-META_VARIABLE_PREFIX = "xvault:"  # prefix for the value of META_VARIABLE, followed by base64-encoded meta JSON, e.g. "xvault:eyJjcnlwdG9fdmVyc2lvbiI6IDEsICJzYWx0IjogIjIxYWYyY2ExZGViMmRhZDgxYTAwZGJiNGQ2MDcwMWYzIiwgImNoZWNrIjogImVuYzp2MTovRUF3R0RRWHdVcXJNRUlFN1dMdFV3dEowMnpHWlczQkpMTS9BeGJBd3YvOSt3PT0ifQ=="
-META_VARIABLE_COMMENTS = "xvault metadata. To view/edit secrets in this file use: pip install -e xvault; xvault edit <file>;"  # comments to indicate the purpose of META_VARIABLE, used in JSON/YAML/ENV
-META_CHECK_VALUE = "xvault"  # known value used to validate password by trying to decrypt it, stored in "_xvault.check"
+from .handlers import (
+    HandlerBase,
+    HandlerEnv,
+    HandlerJson,
+    HandlerJsonc,
+    HandlerMd,
+    HandlerOvpn,
+    HandlerYaml,
+)
+from .meta import (
+    DEFAULT_VERSION,
+    ENC_PREFIX,
+    META_CHECK_VALUE,
+    META_VARIABLE,
+    META_VARIABLE_COMMENTS,
+    META_VARIABLE_PREFIX,
+    XVaultMeta,
+)
+
+
 KEYRING_APP_NAME = "xvault"  # keyring app name for storing unlocked keys
-ENC_PREFIX = "enc:"     # prefix used to identify encrypted values in the store, followed by version info, e.g. "enc:...."
+
+HANDLERS = {
+    ".json": HandlerJson,
+    ".jsonc": HandlerJsonc,
+    ".yaml": HandlerYaml,
+    ".yml": HandlerYaml,
+    ".env": HandlerEnv,
+    ".md": HandlerMd,
+    ".ovpn": HandlerOvpn,
+}
 
 
-# XVault meta
-class XVaultMeta():
-    def __init__(self, schema_version: int, crypto_version: int, salt: str, check: Optional[str]):
-        self.schema_version = schema_version
-        self.crypto_version = crypto_version
-        self.salt = salt
-        self.check = check
-    def to_dict(self):
-        return {
-            "crypto_version": self.crypto_version,
-            "salt": self.salt,
-            "check": self.check
-        }
-    def from_dict(schema_version:int, data: dict):
-        return XVaultMeta(
-            schema_version,
-            crypto_version = data.get("crypto_version", 1),
-            salt = data.get("salt"),
-            check = data.get("check")
-        )   
-
-
-# handlers
-class HandlerBase:
-    @abstractmethod
-    def parse(self, text: str) -> tuple[XVaultMeta, str]:
-        pass
-
-class HandlerJson(HandlerBase):
-    def parse(self, text: str) -> tuple[XVaultMeta, str]:
-        # extract meta
-        _xvault_match = re.search(r'"' + META_VARIABLE + r'"\s*:\s*"([^"]+)"', text)
-        _xvault_value = _xvault_match.group(1) if _xvault_match else None
-        if _xvault_value is None:
-            # default meta
-            meta = XVaultMeta(schema_version = 1, crypto_version  = 1, salt = None, check = None)
-        else:
-            # constants
-            indent = " " * self.detect_json_indentation(text)
-            # decode meta
-            if _xvault_value.startswith(META_VARIABLE_PREFIX):
-                decoded = base64.urlsafe_b64decode(_xvault_value[len(META_VARIABLE_PREFIX):])
-                meta_json = decoded.decode()
-                meta_dict = json.loads(meta_json)
-                meta = XVaultMeta.from_dict(schema_version=1, data= meta_dict)
-            else:
-                raise ValueError("Unable to load vault meta: invalid _xvault format")
-            # remove meta variable from text
-            text = re.sub(r'"' + META_VARIABLE + r'"\s*:\s*"([^"]+)"\s*,?', '', text, count=1)
-            # remove meta comments if exists
-            text = text.replace(f"// {META_VARIABLE_COMMENTS}\n", "")
-            # remove leading empty lines if exists
-            text = f"{{\n{indent}\n{indent}" + text.lstrip("{").lstrip()    
-        # return
-        return (meta, text)
-    def replace_enc_tokens(self, text: str, replacer):
-        # first replace ${enc:...} to avoid replacing enc:... inside ${...}
-        pattern = r"\$\{enc:[^}\r\n]+\}+"
-        text = re.sub(pattern, lambda m: replacer(m.group(0)), text)
-        # then replace enc:... that are not inside ${...}
-        pattern = r"(?<!\$\{)enc:[^\"\r\n]+"
-        return re.sub(pattern, lambda m: replacer(m.group(0)), text)
-    def detect_json_indentation(self, text: str) -> int | None:
-        for line in text.splitlines():
-            if not line.strip():
-                continue
-            spaces = len(line) - len(line.lstrip(" "))
-            if spaces > 0:
-                return spaces
-        return 2  # default indentation
-    def stringify(self, meta: XVaultMeta, text: str) -> str:
-        # encode
-        _xvault = base64.urlsafe_b64encode(json.dumps(meta.to_dict()).encode()).decode()
-        indent = " " * self.detect_json_indentation(text)
-        result = "{\n"
-        result += f"{indent}\"{META_VARIABLE}\": \"{META_VARIABLE_PREFIX}{_xvault}\""
-        if '"' in text:
-            result += ","
-        result += f"\n{indent}"
-        result += f"\n{indent}"
-        result += text.lstrip('{').strip()
-        return result
-    def getValue(self, text: str, path: str) -> Optional[str]:
-        # pattern to match lines like: SECRET
-        data = json5.loads(text)
-        value = data
-        for key in path.split("."):
-            if not isinstance(value, dict) or key not in value:
-                return None
-            value = value[key]
-        return value
-    def setValue(self, text: str, path: str, value: str, encrypt: bool = True) -> str:
-        # set value
-        actual_value = f"{ENC_PREFIX}{value}" if encrypt else value
-        data = json5.loads(text)
-        keys = path.split(".")
-        target = data
-        for key in keys[:-1]:
-            if key not in target:
-                target[key] = {}
-            target = target[key]
-        target[keys[-1]] = actual_value
-        return json.dumps(data, indent=self.detect_json_indentation(text))
-
-class HandlerJsonc(HandlerJson):
-    def stringify(self, meta: XVaultMeta, text: str) -> str:
-        # encode
-        _xvault = base64.urlsafe_b64encode(json.dumps(meta.to_dict()).encode()).decode()
-        indent = " " * self.detect_json_indentation(text)
-        result = "{\n"
-        result += f"{indent}// {META_VARIABLE_COMMENTS}\n"
-        result += f"{indent}\"{META_VARIABLE}\": \"{META_VARIABLE_PREFIX}{_xvault}\""
-        if '"' in text:
-            result += ","
-        result += f"\n{indent}"
-        result += f"\n{indent}"
-        result += text.lstrip('{').strip()
-        return result
-    def getValue(self, text: str, path: str) -> Optional[str]:
-        # pattern to match lines like: SECRET
-        data = json5.loads(text)
-        value = data
-        for key in path.split("."):
-            if not isinstance(value, dict) or key not in value:
-                return None
-            value = value[key]
-        return value
-    def setValue(self, text: str, path: str, value: str, encrypt: bool = True) -> str:
-        # set value
-        raise NotImplementedError("setValue is not implemented for Jsonc format")
-    
-class HandlerEnv(HandlerBase):
-    def parse(self, text: str) -> tuple[XVaultMeta, str]:
-        _xvault_match = re.search(r'^' + META_VARIABLE + r'\s*=\s*(.+)$', text, re.MULTILINE)
-        _xvault_value = _xvault_match.group(1) if _xvault_match else None
-        if _xvault_value is None:
-            # default meta
-            meta = XVaultMeta(schema_version = 1, crypto_version  = 1, salt = None, check = None)
-        elif _xvault_value.startswith(META_VARIABLE_PREFIX):
-            # decode meta
-            decoded = base64.urlsafe_b64decode(_xvault_value[len(META_VARIABLE_PREFIX):])
-            meta_json = decoded.decode()
-            meta_dict = json.loads(meta_json)
-            meta = XVaultMeta.from_dict(schema_version=1, data= meta_dict)
-            # replace meta variable with empty line in text
-            text = text.replace(f"# {META_VARIABLE_COMMENTS}\n", "")
-            text = re.sub(r'^' + META_VARIABLE + r'\s*=\s*.+$', "", text, count=1, flags=re.MULTILINE)    
-            text = text.lstrip("\n")  # remove leading empty lines if exists
-        else:
-            raise ValueError("Unable to load vault meta: invalid _xvault format")
-        # return
-        return (meta, text)
-    def replace_enc_tokens(self, text: str, replacer):
-        # first replace ${enc:...} to avoid replacing enc:... inside ${...}
-        pattern = r"\$\{enc:[^}\r\n]+\}+"
-        text = re.sub(pattern, lambda m: replacer(m.group(0)), text)
-        # then replace enc:... that are not inside ${...}
-        pattern = r"(?<!\$\{)enc:[^\r\n#\"']+"
-        return re.sub(pattern, lambda m: replacer(m.group(0)), text)
-    def stringify(self, meta: XVaultMeta, text: str) -> str:
-        # encode
-        _xvault = base64.urlsafe_b64encode(json.dumps(meta.to_dict()).encode()).decode()
-        result = f"# {META_VARIABLE_COMMENTS}\n"
-        result += f"{META_VARIABLE}={META_VARIABLE_PREFIX}{_xvault}\n"
-        result += "\n"
-        result += text
-        return result
-    def getValue(self, text: str, name: str) -> Optional[str]:
-        # pattern to match lines like: SECRET
-        data = dotenv_values(stream=StringIO(text))
-        if name not in data:
-            return None
-        return data[name]
-    def setValue(self, text: str, path: str, value: str, encrypt: bool = True) -> str:
-        # set value
-        actual_value = f"{ENC_PREFIX}{value}" if encrypt else value
-        pattern = r'^' + re.escape(path) + r'\s*=.*$'
-        if re.search(pattern, text, re.MULTILINE):
-            return re.sub(pattern, lambda _: f'{path}={actual_value}', text, count=1, flags=re.MULTILINE)
-        if not text.endswith('\n'):
-            text += '\n'
-        return text + f'{path}={actual_value}\n'
-
-class HandlerYaml(HandlerBase):
-    def parse(self, text: str) -> tuple[XVaultMeta, str]:
-        # extract meta from YAML (_xvault: enc:....\n")
-        _xvault_match = re.search(r'' + META_VARIABLE + r'\s*:\s*([^"\r\n]+)', text)
-        _xvault_value = _xvault_match.group(1) if _xvault_match else None
-        if _xvault_value is None:
-            # default meta
-            meta = XVaultMeta(schema_version = 1, crypto_version  = 1, salt = None, check = None)
-        else:
-            # decode meta
-            if _xvault_value.startswith(META_VARIABLE_PREFIX):
-                decoded = base64.urlsafe_b64decode(_xvault_value[len(META_VARIABLE_PREFIX):])
-                meta_json = decoded.decode()
-                meta_dict = json.loads(meta_json)
-                meta = XVaultMeta.from_dict(schema_version=1, data= meta_dict)
-            else:
-                raise ValueError("Unable to load vault meta: invalid _xvault format")
-            # remove meta variable from text
-            text = re.sub(r'' + META_VARIABLE + r'\s*:\s*([^"\r\n]+)', '', text, count=1)
-            # remove meta comments if exists
-            text = text.replace(f"# {META_VARIABLE_COMMENTS}\n", "")
-            # remove leading empty lines if exists
-            text = text.lstrip()
-        # return
-        return (meta, text)
-    def replace_enc_tokens(self, text: str, replacer):
-        # first replace ${enc:...} to avoid replacing enc:... inside ${...}
-        pattern = r"\$\{enc:[^}\r\n]+\}+"
-        text = re.sub(pattern, lambda m: replacer(m.group(0)), text)
-        # then replace enc:... that are not inside ${...}
-        pattern = r"(?<!\$\{)enc:[^\"\r\n]+"
-        return re.sub(pattern, lambda m: replacer(m.group(0)), text)
-    def stringify(self, meta: XVaultMeta, text: str) -> str:
-        # encode
-        _xvault = base64.urlsafe_b64encode(json.dumps(meta.to_dict()).encode()).decode()
-        result = f"# {META_VARIABLE_COMMENTS}\n{META_VARIABLE}: {META_VARIABLE_PREFIX}{_xvault}\n\n" + text
-        return result
-    def getValue(self, text: str, path: str) -> Optional[str]:
-        # pattern to match lines like: SECRET
-        data = yaml.safe_load(text)
-        value = data
-        for key in path.split("."):
-            if not isinstance(value, dict) or key not in value:
-                return None
-            value = value[key]
-        return value
-
-    def setValue(self, text: str, path: str, value: str, encrypt: bool = True) -> str:
-        actual_value = f"{ENC_PREFIX}{value}" if encrypt else value
-        data = yaml.safe_load(text) or {}
-        keys = path.split(".")
-        target = data
-        for key in keys[:-1]:
-            if key not in target:
-                target[key] = {}
-            target = target[key]
-        target[keys[-1]] = actual_value
-        return yaml.dump(data, default_flow_style=False, allow_unicode=True)
-
-class HandlerMd(HandlerBase):
-    def parse(self, text: str) -> tuple[XVaultMeta, str]:
-        # extract meta from Markdown (---\n_xvault: enc:....\n---\n")
-        front_matter_match = m = re.match(r'^---\r?\n(.*?)\r?\n---\r?\n?', text, re.DOTALL)
-        front_matter_value = front_matter_match.group(1) if m else None
-        _xvault_value = None
-        if front_matter_value:
-            # decode xvault meta from front matter
-            _xvault_match = re.search(r'' + META_VARIABLE + r'\s*:\s*([^"\r\n]+)', front_matter_value)
-            _xvault_value = _xvault_match.group(1) if _xvault_match else None
-            # extract meta from front matter
-            text = text[front_matter_match.end():]  # remove front matter from text
-            text = text.lstrip()  # remove leading empty lines if exists
-        if _xvault_value is None:
-            # default meta
-            meta = XVaultMeta(schema_version = 1, crypto_version  = 1, salt = None, check = None)
-        else:
-            # decode meta
-            if _xvault_value.startswith(META_VARIABLE_PREFIX):
-                decoded = base64.urlsafe_b64decode(_xvault_value[len(META_VARIABLE_PREFIX):])
-                meta_json = decoded.decode()
-                meta_dict = json.loads(meta_json)
-                meta = XVaultMeta.from_dict(schema_version=1, data= meta_dict)
-            else:
-                raise ValueError("Unable to load vault meta: invalid _xvault format")
-            # remove leading empty lines if exists
-            text = text.lstrip()
-        # return
-        return (meta, text)
-    def replace_enc_tokens(self, text: str, replacer):
-        # first replace ${enc:...} to avoid replacing enc:... inside ${...}
-        pattern = r"\$\{enc:[^}\r\n]+\}+"
-        text = re.sub(pattern, lambda m: replacer(m.group(0)), text)
-        # then replace enc:... that are not inside ${...}
-        pattern = r"(?<!\$\{)enc:[^\"\r\n]+"
-        return re.sub(pattern, lambda m: replacer(m.group(0)), text)
-    def stringify(self, meta: XVaultMeta, text: str) -> str:
-        # encode
-        _xvault = base64.urlsafe_b64encode(json.dumps(meta.to_dict()).encode()).decode()
-        result = f"---\n"
-        result += f"# {META_VARIABLE_COMMENTS}\n"
-        result += f"{META_VARIABLE}: {META_VARIABLE_PREFIX}{_xvault}\n"
-        result += f"---\n\n"
-        result += text
-        return result
-    def getValue(self, text: str, path: str) -> Optional[str]:
-        # pattern to match lines like: SECRET
-        raise NotImplementedError("getValue is not implemented for Markdown format")
-
-    
 class HandlerXml(HandlerBase):
+    """Compatibility stub for the unsupported XML format."""
+
     pass
-
-class HandlerOvpn(HandlerBase):
-    def parse(self, text: str) -> tuple[XVaultMeta, str]:
-        _xvault_match = re.search(r'^#\s*' + META_VARIABLE + r'\s*=\s*(.+)$', text, re.MULTILINE)
-        _xvault_value = _xvault_match.group(1).strip() if _xvault_match else None
-        if _xvault_value is None:
-            meta = XVaultMeta(schema_version=1, crypto_version=1, salt=None, check=None)
-        elif _xvault_value.startswith(META_VARIABLE_PREFIX):
-            decoded = base64.urlsafe_b64decode(_xvault_value[len(META_VARIABLE_PREFIX):])
-            meta_json = decoded.decode()
-            meta_dict = json.loads(meta_json)
-            meta = XVaultMeta.from_dict(schema_version=1, data=meta_dict)
-            text = text.replace(f"# {META_VARIABLE_COMMENTS}\n", "")
-            text = re.sub(r'^#\s*' + META_VARIABLE + r'\s*=\s*.+\n?', "", text, count=1, flags=re.MULTILINE)
-            text = text.lstrip("\n")
-        else:
-            raise ValueError("Unable to load vault meta: invalid _xvault format")
-        return (meta, text)
-
-    def replace_enc_tokens(self, text: str, replacer):
-        # first replace ${enc:...} to avoid replacing enc:... inside ${...}
-        pattern = r"\$\{enc:[^}\r\n]+\}+"
-        text = re.sub(pattern, lambda m: replacer(m.group(0)), text)
-        # then replace enc:... at the start of a line
-        pattern = r"(?m)^enc:[^\r\n]+"
-        return re.sub(pattern, lambda m: replacer(m.group(0)), text)
-
-    def stringify(self, meta: XVaultMeta, text: str) -> str:
-        _xvault = base64.urlsafe_b64encode(json.dumps(meta.to_dict()).encode()).decode()
-        result = f"# {META_VARIABLE_COMMENTS}\n"
-        result += f"# {META_VARIABLE}={META_VARIABLE_PREFIX}{_xvault}\n"
-        result += "\n"
-        result += text
-        return result
-
-    def getValue(self, text: str, path: str) -> Optional[str]:
-        # XML-like block section: <path>\ncontent\n</path>
-        block_match = re.search(r'<' + re.escape(path) + r'>\r?\n(.*?)\r?\n</' + re.escape(path) + r'>', text, re.DOTALL)
-        if block_match:
-            return block_match.group(1).strip()
-        # inline directive: path [value]
-        line_match = re.search(r'^' + re.escape(path) + r'(?:[ \t]+([^\r\n#;]+))?[ \t]*$', text, re.MULTILINE)
-        if line_match:
-            value = line_match.group(1)
-            return value.strip() if value else ""
-        return None
-
-    def setValue(self, text: str, path: str, value: str, encrypt: bool = True) -> str:
-        if encrypt:
-            # prefix each line with enc: to mark for encryption, preserving line breaks
-            value = "\n".join(f"{ENC_PREFIX}{line}" for line in value.splitlines())
-        # XML-like block section: <path>\ncontent\n</path>
-        block_pattern = r'<' + re.escape(path) + r'>\r?\n.*?\r?\n</' + re.escape(path) + r'>'
-        if re.search(block_pattern, text, re.DOTALL):
-            replacement = f'<{path}>\n{value}\n</{path}>'
-            return re.sub(block_pattern, lambda _: replacement, text, count=1, flags=re.DOTALL)
-        # inline directive: path [value]
-        line_pattern = r'^' + re.escape(path) + r'(?:[ \t]+[^\r\n#;]*)?[ \t]*$'
-        if "\n" in value:
-            replacement = f'<{path}>\n{value}\n</{path}>'
-            if re.search(line_pattern, text, re.MULTILINE):
-                return re.sub(line_pattern, lambda _: replacement, text, count=1, flags=re.MULTILINE)
-            if not text.endswith('\n'):
-                text += '\n'
-            return text + replacement + '\n'
-        if encrypt and value:
-            value = "${" + value + "}"
-        if re.search(line_pattern, text, re.MULTILINE):
-            replacement = f'{path} {value}' if value else path
-            return re.sub(line_pattern, lambda _: replacement, text, count=1, flags=re.MULTILINE)
-        # not found: append
-        if not text.endswith('\n'):
-            text += '\n'
-        text += (f'{path} {value}' if value else path) + '\n'
-        return text
-
-
-
-
-
-
 
 
 # class
@@ -430,23 +73,10 @@ class XVault():
         self._text = None
         self._meta = None
         self._cache = {}
-        if path.endswith(".json"):
-            self._handler = HandlerJson()
-        elif path.endswith(".jsonc"):
-            self._handler = HandlerJsonc()
-        elif path.endswith(".env"):
-              self._handler = HandlerEnv()
-        elif path.endswith(".yml") or path.endswith(".yaml"):
-              self._handler = HandlerYaml()
-        elif path.endswith(".md"):
-              self._handler = HandlerMd()
-        elif path.endswith(".xml"):
-              self._handler = HandlerXml()
-        elif path.endswith(".ovpn"):
-            self._handler = HandlerOvpn()
-        else:
-              raise ValueError(f"Unable to open: unsupported file format: only .json, .jsonc, .env, .yml, .yaml, .md, .xml, .ovpn are supported: {path}")
-        self._handler
+        handler_class = HANDLERS.get(self._path.suffix)
+        if handler_class is None:
+            raise ValueError(f"Unable to open: unsupported file format: only .json, .jsonc, .env, .yml, .yaml, .md, .ovpn are supported: {path}")
+        self._handler = handler_class()
         self._load()
         # auto unlock
         if not self._no_cache_key and self._password:

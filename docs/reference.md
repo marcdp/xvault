@@ -13,7 +13,7 @@ This reference describes the on-disk representation implemented by xvault versio
 | `.md` | YAML-style front matter | unsupported / unsupported |
 | `.ovpn` | `# _xvault=...` comment | directive or block / directive or block |
 
-`.xml` is recognized by the constructor but has no implemented handler and is not a usable xvault file type.
+XML has no implemented handler and is not a supported xvault file type.
 
 ## Secret markers
 

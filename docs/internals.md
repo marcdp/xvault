@@ -4,7 +4,9 @@
 
 xvault is a small Python package with one public class, `XVault`, and a CLI entry point in `xvault.__main__`. The CLI constructs `XVault` for a file and delegates editing, lookup, export, validation, locking, and rekeying to it.
 
-`xvault.xvault` selects a handler from the filename extension. A handler reads and writes metadata, finds secret markers, and—in formats that implement it—looks up or sets values. `XVault` owns key derivation, encryption, decryption, variable resolution, and OS-keyring access. Editing uses `XEditor` from the `dprojectstools` dependency to present decrypted text in the terminal.
+`xvault.xvault` selects a handler from the filename extension. `xvault.meta` contains the shared metadata representation and constants, while `xvault.handlers` contains the base interface and one module per supported format. A handler reads and writes metadata, finds secret markers, and—in formats that implement it—looks up or sets values. `XVault` owns key derivation, encryption, decryption, variable resolution, and OS-keyring access. Editing uses `XEditor` from the `dprojectstools` dependency to present decrypted text in the terminal.
+
+The handler modules are `json`, `jsonc`, `yaml`, `env`, `markdown`, and `ovpn`. Handler classes and metadata names remain re-exported from `xvault.xvault` for compatibility with existing Python imports.
 
 ```mermaid
 flowchart LR
@@ -54,6 +56,6 @@ pip install -e ".[test]"
 python -m pytest -q
 ```
 
-GitHub Actions runs the pytest suite on Ubuntu with Python 3.10 for pushes to `main` and pull requests. The repository also includes `p.py`, an intentional local development utility. It provides commands for editable installation and for building or publishing distributions with local PyPI credentials sourced through xvault. It is not part of the installed package workflow and should remain in place.
+GitHub Actions runs the pytest suite on Ubuntu with Python 3.12 for pushes to `main` and pull requests. The repository also includes `p.py`, an intentional local development utility. It provides commands for editable installation and for building or publishing distributions with local PyPI credentials sourced through xvault. It is not part of the installed package workflow and should remain in place.
 
 The release helper invokes `py -m build` and `py -m twine upload dist/*`; its comments describe the required local setup and manual version increase. The CI workflow currently tests rather than building or publishing releases.
