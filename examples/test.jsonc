@@ -1,0 +1,17 @@
+{
+    // xvault meta variable (do not modify)
+    "_xvault": "xvault:eyJjcnlwdG9fdmVyc2lvbiI6IDEsICJzYWx0IjogIjVjMWY1YjQ0ODdlZTQwN2I4N2UzNDc4NDlmOGM4NzZhIiwgImNoZWNrIjogIi1IdlVwQy05X1lYdS1xd25XeTZzY3BrUk1LakRTQ2ZQZTFMNkpSVFZzWVkyOGc9PSJ9",
+    
+    // this is a comment
+    "value1": "111113213_asd2331211233asdds22222dasdasdasdasd2223334444333223333336611",
+    "value2": "aaaasd${enc:egLZQvZqIEWvVHmt2qb-2OCCeZfEInLgUJjWowIPn5uZB4mXuBjP}, ${enc:I3a-xIRVVBV0nj56rcWZD66enSCXdPYOkkEfJBnL-AY=}",
+
+    // this is another comment àaaaáaa
+    "value3": {
+        "value31": "asdasd",
+        "value32": "asdassad asd as cgun deu"
+    },
+    "value4": "asd",
+    "list": ["asdasd", "asdasdasldkjh asd", 123, 123, 43234, "ddd"]
+    
+}

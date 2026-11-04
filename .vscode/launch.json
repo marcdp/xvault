@@ -6,7 +6,7 @@
       "type": "debugpy",
       "request": "launch",
       "module": "xvault",
-      "args": ["edit", "tests/data/test.md"],
+      "args": ["edit", "examples/test.md"],
       "justMyCode": false,
       "console": "externalTerminal",
       "env": {
@@ -18,7 +18,7 @@
       "type": "debugpy",
       "request": "launch",
       "module": "xvault",
-      "args": ["set", "tests/data/test.ovpn", "auth-user-pass", "Lorem\nIpsum"],
+      "args": ["set", "examples/test.ovpn", "auth-user-pass", "Lorem\nIpsum"],
       "justMyCode": false,
       "console": "externalTerminal",
       "env": {
