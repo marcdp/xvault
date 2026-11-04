@@ -59,6 +59,9 @@ class CryptoV1(CryptoBase):
         self._cache = {}
         return self._key
 
+    def get_cacheable_key(self) -> bytes:
+        return self.get_key()
+
     def validate_password(self) -> None:
         if not self._meta.check:
             return

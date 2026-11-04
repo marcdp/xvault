@@ -44,6 +44,9 @@ class FakeVault:
     def rekey(self, new_password):
         return None
 
+    def upgrade(self, password):
+        return None
+
     def set(self, key, value, encrypt=True):
         return None
 
@@ -256,6 +259,22 @@ def test_rekey_asks_new_password(monkeypatch):
     rc = cli.rekey("any.env")
     assert rc is None
     assert calls == ["new-secret"]
+
+
+def test_upgrade_requires_password_again(monkeypatch, capsys):
+    calls = []
+
+    class UpgradeFakeVault(FakeVault):
+        def upgrade(self, password):
+            calls.append(password)
+
+    monkeypatch.setattr(cli.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(cli, "XVault", UpgradeFakeVault)
+    monkeypatch.setattr(cli, "ask_password", lambda **kwargs: "migration-password")
+
+    assert cli.upgrade("any.env") is None
+    assert calls == ["migration-password"]
+    assert "upgraded" in capsys.readouterr().out
 
 
 def test_edit_calls_edit_secret_when_key_is_provided(monkeypatch):

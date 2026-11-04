@@ -92,7 +92,9 @@ def unicode_password():
 def vault_initialized(temp_vault_env, password):
     """Create and initialize a vault with password."""
     vault = XVault(temp_vault_env, password=password)
-    vault.unlock()  # Initialize with key in memory
+    vault._encrypt_value("initialize")
+    vault._save()
+    vault.unlock()
     return vault
 
 
@@ -195,9 +197,10 @@ class TestPasswordValidation:
         # Should not raise and should return early
         vault_uninitialized._validate_password()
 
-    def test_validate_password_corrupted_check_value(self, vault_initialized):
-        """Test that corrupted check value raises error."""
-        vault_initialized._meta.check = "invalid_base64_@#$!@"
+    def test_validate_password_corrupted_wrapped_key(self, vault_initialized):
+        """Test that a corrupted wrapped DEK raises an error."""
+        vault_initialized._crypto._dek = None
+        vault_initialized._meta.encrypted_key = "invalid_base64_@#$!@"
         
         with pytest.raises(Exception):  # binascii.Error or similar
             vault_initialized._validate_password()
@@ -205,6 +208,8 @@ class TestPasswordValidation:
     def test_validate_password_unicode(self, temp_vault_env, unicode_password):
         """Test validation with unicode password."""
         vault = XVault(temp_vault_env, password=unicode_password)
+        vault._encrypt_value("initialize")
+        vault._save()
         vault.unlock()
         
         vault._validate_password()  # Should not raise
@@ -359,7 +364,7 @@ class TestDecryption:
         """Test that invalid base64 raises error."""
         invalid_b64 = "not_valid_base64_@#$"
         
-        with pytest.raises(binascii.Error):
+        with pytest.raises((binascii.Error, ValueError)):
             vault_initialized._decrypt_value(invalid_b64)
 
     def test_decrypt_truncated_nonce(self, vault_initialized):
@@ -593,26 +598,26 @@ class TestTextEncryption:
 # ============================================================================
 
 class TestCheckMechanism:
-    """Test the check value mechanism for password validation."""
+    """Test the wrapped-DEK password validation mechanism."""
 
     def test_meta_check_persistence(self, temp_vault_env, password):
         """Test that check value persists across reopen."""
         # Create and initialize
         vault1 = XVault(temp_vault_env, password=password)
-        vault1.unlock()
+        vault1._encrypt_value("initialize")
         vault1._save()
-        check_value_1 = vault1._meta.check
+        check_value_1 = vault1._meta.encrypted_key
         
         # Reopen
         vault2 = XVault(temp_vault_env, password=password)
-        check_value_2 = vault2._meta.check
+        check_value_2 = vault2._meta.encrypted_key
         
         assert check_value_1 == check_value_2
 
     def test_meta_check_invalid_password_fails(self, temp_vault_env):
         """Test that invalid password fails check validation."""
         vault1 = XVault(temp_vault_env, password="correct_password")
-        vault1.unlock()
+        vault1._encrypt_value("initialize")
         vault1._save()
         # Open with wrong password
         with pytest.raises(ValueError, match="invalid password"):
@@ -631,8 +636,8 @@ class TestCryptoEdgeCases:
         vault = XVault(temp_vault_env, password=password)
         vault._get_key()
         
-        # Should default to version 1
-        assert vault._meta.crypto_version == 1
+        # New vaults default to envelope-encryption version 2.
+        assert vault._meta.crypto_version == 2
         
         encrypted = vault._encrypt_value("test")
         decrypted = vault._decrypt_value(encrypted)

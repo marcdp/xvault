@@ -4,7 +4,7 @@
 
 xvault is a small Python package with one public class, `XVault`, and a CLI entry point in `xvault.__main__`. The CLI constructs `XVault` for a file and delegates editing, lookup, export, validation, locking, and rekeying to it.
 
-`xvault.xvault` selects a handler from the filename extension and orchestrates file operations, marker processing, variable resolution, and OS-keyring access. `xvault.meta` contains the shared metadata representation and constants, while `xvault.handlers` contains the base interface and one module per supported format. A handler reads and writes metadata, finds secret markers, and—in formats that implement it—looks up or sets values. `xvault.crypto.v1` owns the version 1 key lifecycle and value-level encryption: Argon2id derivation, AES-GCM encryption and decryption, password validation, and ciphertext reuse. `xvault.crypto.base` is the small interface used for that delegation. Editing uses `XEditor` from the `dprojectstools` dependency to present decrypted text in the terminal.
+`xvault.xvault` selects a handler and orchestrates file operations, marker processing, variable resolution, atomic replacement, version selection, and OS-keyring access. `xvault.meta` owns the version-aware metadata representation. Handlers only place metadata, find markers, and parse or serialize their file syntax. `xvault.crypto.v1` preserves the original direct-key scheme. `xvault.crypto.v2` owns KEK derivation, DEK generation and wrapping, value encryption, and password-rotation candidates. `xvault.crypto.base` exposes only validation, value encryption/decryption, replacement-password compatibility, and a version-appropriate cacheable credential. Editing uses `XEditor` from `dprojectstools`.
 
 The handler modules are `json`, `jsonc`, `yaml`, `env`, `markdown`, and `ovpn`. Handler classes and metadata names remain re-exported from `xvault.xvault` for compatibility with existing Python imports.
 
@@ -14,8 +14,8 @@ flowchart LR
   H --> X[XVault]
   X --> E[decrypt/edit/encrypt]
   X --> K[OS keyring]
-  X --> C[CryptoV1]
-  C --> A[Argon2id key and AES-GCM]
+  X --> C[CryptoV1 or CryptoV2]
+  C --> A[Argon2id and AES-GCM]
   E --> F
 ```
 
@@ -23,13 +23,19 @@ The normal lifecycle is: load the file; parse its metadata; obtain a derived or 
 
 ## Cryptography
 
-Crypto version 1 derives a 32-byte key with Argon2id from the user password, a 16-byte random salt, time cost 5, memory cost 131072 KiB, and parallelism 4. It encrypts each marked UTF-8 value independently with AES-256-GCM and a fresh 12-byte random nonce. The stored payload is URL-safe base64 of the nonce followed by AES-GCM ciphertext and authentication tag.
+Both crypto versions derive 32 bytes with Argon2id from the password and a 16-byte salt using time cost 5, memory cost 131072 KiB, and parallelism 4. V1 uses the result directly for value encryption and retains its encrypted check value.
+
+V2 treats the derived key as a KEK. Initialization generates one random 32-byte DEK, wraps it with AES-256-GCM using the KEK, a fresh 12-byte nonce, and AAD `xvault:v2:dek`, then stores the wrapped DEK in metadata. The DEK encrypts each marked UTF-8 value with its own random 12-byte nonce and no AAD. Failure to unwrap an existing DEK is always an error; it can never trigger DEK replacement.
 
 Metadata contains the salt, crypto version, and an encrypted check value. The check value verifies a password or cached key before use. See the precise on-disk representation in [reference.md](reference.md).
 
 ## Key management
 
-The password is used to derive a key and is then cleared from the `XVault` instance. Derived keys can remain in process memory for the duration of the operation. `unlock` writes a base64-encoded derived key to the operating system keyring under an entry based on the file's absolute URI; `lock` removes it. `rekey` decrypts the current marked values, derives a new key from the new password using the existing salt, then saves new ciphertext and refreshes the cache unless `--no-cache-key` is used.
+The password is consumed after derivation; derived keys can remain in process memory for the operation. `unlock` caches a base64-encoded v1 key or v2 KEK under version-distinct, file-specific identities. A cached v2 KEK is accepted only if it unwraps the stored DEK. `lock` removes the active identity. `--no-cache-key` prevents all normal keyring reads, writes, and deletions.
+
+V2 `rekey` first authenticates the current DEK, prepares a fresh salt, new KEK, and newly wrapped copy of the same DEK, and atomically writes candidate metadata. Only after that succeeds does it activate the candidate and refresh the keyring. Secret ciphertext is byte-for-byte unchanged. V1 retains its previous full re-encryption behavior. Password rotation does not revoke the ability to decrypt historical Git revisions using their historical password or cached key.
+
+`upgrade` is the only v1-to-v2 path. It requires the password again, decrypts marked values in memory, prepares a fresh v2 DEK and complete candidate representation, verifies that candidate, then atomically replaces the file. A failed preparation or write leaves the v1 file and active object usable.
 
 Keyring behavior depends on the active platform backend. It can be unavailable in remote or headless environments, and cached keys are valuable secrets in their own right.
 
@@ -45,9 +51,11 @@ xvault aims to keep explicitly marked values encrypted at rest in a readable, Gi
 - A compromised machine, terminal, Python process, or editor session.
 - An attacker who can use or extract an unlocked OS-keyring entry.
 - Plaintext written by `get`, `export`, terminal scrollback, or redirected output.
-- Integrity or confidentiality of unmarked file content, metadata placement, file names, or the overall file structure. AES-GCM has no associated data in this implementation.
+- Integrity or confidentiality of unmarked file content, metadata placement, file names, or the overall file structure.
+- Authentication of a secret's field identity or location. V2 intentionally uses no field-bound AAD, so valid encrypted values can be moved between marked locations in the same vault.
+- Revocation of historical revisions after password rotation. Compromise of a DEK requires full data-key rotation (v1-to-v2 upgrade creates one; v2 password rekey does not).
 
-Use a strong unique passphrase, keep working copies on trusted machines, use `--no-cache-key` where appropriate, and inspect output and Git diffs. xvault has not been represented here as independently security audited.
+Use a strong unique passphrase, keep working copies on trusted machines, use `--no-cache-key` where appropriate, and inspect output and Git diffs. Crypto v2 has not undergone an independent security audit.
 
 ## Development
 

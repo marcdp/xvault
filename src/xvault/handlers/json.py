@@ -22,7 +22,7 @@ class HandlerJson(HandlerBase):
         _xvault_value = _xvault_match.group(1) if _xvault_match else None
         if _xvault_value is None:
             # default meta
-            meta = XVaultMeta(schema_version = 1, crypto_version  = 1, salt = None, check = None)
+            meta = XVaultMeta.new(schema_version=1)
         else:
             # constants
             indent = " " * self.detect_json_indentation(text)

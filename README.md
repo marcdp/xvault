@@ -54,9 +54,9 @@ Treat exported output as plaintext. See the [usage guide](docs/usage.md) for the
 
 - Inline `enc:` and `${enc:...}` secret markers.
 - JSON, JSONC, YAML, ENV, Markdown, and OpenVPN configuration support.
-- Per-value AES-256-GCM encryption using a key derived with Argon2id.
+- Envelope encryption for new vaults: a random AES-256-GCM data key protected by an Argon2id password-derived key.
 - Optional file-local `${var:NAME}` resolution during `get` and `export`.
-- `edit`, `get`, `set`, `export`, `info`, `validate`, `unlock`, `lock`, and `rekey` commands.
+- `edit`, `get`, `set`, `export`, `info`, `validate`, `unlock`, `lock`, `rekey`, and explicit v1-to-v2 `upgrade` commands.
 - Optional OS-keyring cache for derived keys.
 
 ## Supported formats

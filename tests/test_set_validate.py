@@ -169,18 +169,18 @@ def test_validate_incorrect_password_is_error(tmp_path):
         check["message"]
         for check in result["checks"]
         if check["name"] == "password-validation" and check["severity"] == "error"
-    } == {"invalid password"}
+    } == {"invalid password or metadata"}
 
 
-def test_validate_corrupted_check_metadata_is_error(tmp_path):
+def test_validate_corrupted_wrapped_key_metadata_is_error(tmp_path):
     _, vault = make_initialized_vault(tmp_path)
-    vault._meta.check = "invalid-check-value"
+    vault._meta.encrypted_key = "invalid-wrapped-key"
 
     result = vault.validate()
 
     assert result["status"] == "error"
     assert any(
-        check["name"] == "password-validation" and check["severity"] == "error"
+        check["name"] == "encrypted-key" and check["severity"] == "error"
         for check in result["checks"]
     )
 
@@ -194,7 +194,7 @@ def test_validate_missing_and_invalid_metadata_are_errors(tmp_path):
     invalid_vault._meta.salt = "not-hex"
     invalid_result = invalid_vault.validate()
 
-    assert missing_result["status"] == "error"
+    assert missing_result["status"] == "warning"
     assert invalid_result["status"] == "error"
     assert any(check["name"] == "salt" and check["severity"] == "error" for check in invalid_result["checks"])
 

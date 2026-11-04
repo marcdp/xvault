@@ -2,11 +2,15 @@ from abc import ABC, abstractmethod
 
 
 class CryptoBase(ABC):
-    """Value-level cryptographic operations used by :class:`xvault.XVault`."""
+    """Small common interface for value-level vault cryptography."""
 
     @abstractmethod
+    def get_cacheable_key(self) -> bytes:
+        """Return the authenticated credential suitable for keyring caching."""
+
     def get_key(self) -> bytes:
-        """Return the active encryption key, deriving it when necessary."""
+        """Compatibility alias for callers of the original v1 interface."""
+        return self.get_cacheable_key()
 
     @abstractmethod
     def validate_password(self) -> None:
@@ -19,7 +23,3 @@ class CryptoBase(ABC):
     @abstractmethod
     def decrypt(self, encrypted_value: str) -> str:
         """Decrypt one ciphertext value."""
-
-    @abstractmethod
-    def replace_password(self, password: str) -> None:
-        """Discard the active key and prepare to derive a replacement key."""

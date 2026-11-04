@@ -1,6 +1,6 @@
 # File-format reference
 
-This reference describes the on-disk representation implemented by xvault version 1 handlers. Plaintext in the editor, encrypted source on disk, and decrypted `get` or `export` output are different representations.
+This reference describes the versioned on-disk representation. Plaintext in the editor, encrypted source on disk, and decrypted `get` or `export` output are different representations.
 
 ## Supported file types
 
@@ -50,7 +50,7 @@ Resolution makes one substitution pass and has no escaping syntax. It does not r
 
 ## File metadata
 
-On first save, xvault adds `_xvault` metadata. Its value begins with `xvault:` followed by URL-safe base64 encoding of a JSON object:
+On the first encrypting save, xvault adds `_xvault` metadata. Its value begins with `xvault:` followed by URL-safe base64 encoding of a JSON object. Existing v1 vaults retain this form:
 
 ```json
 {
@@ -60,7 +60,17 @@ On first save, xvault adds `_xvault` metadata. Its value begins with `xvault:` f
 }
 ```
 
-`schema_version` is fixed at 1 by the handlers and is reported by `info`, but is not written into this JSON object. `salt` is 16 random bytes represented as 32 hexadecimal characters. `check` encrypts a known internal value and lets xvault verify that a supplied password or cached key is correct.
+New vaults use v2:
+
+```json
+{
+  "crypto_version": 2,
+  "salt": "<32 hexadecimal characters>",
+  "encrypted_key": "<URL-safe base64 wrapped DEK>"
+}
+```
+
+`schema_version` remains fixed at 1 in the handlers and is reported by `info`, but is not written into this JSON object. Both salts are 16 random bytes represented as 32 hexadecimal characters. V1's `check` encrypts a known internal value. V2 authenticates a credential by unwrapping `encrypted_key` and never writes `check`. Missing or malformed required v2 fields are errors, not an invitation to create a replacement key.
 
 Metadata placement is format-specific:
 
@@ -77,7 +87,13 @@ Markdown writes a front-matter block; OpenVPN writes commented metadata. The met
 
 ## Encryption representation
 
-For `crypto_version` 1, xvault derives a 32-byte key with Argon2id from the password and metadata salt. The current parameters are time cost 5, memory cost 131072 KiB, parallelism 4, and output length 32 bytes.
+Both versions use Argon2id with a 16-byte salt, time cost 5, memory cost 131072 KiB, parallelism 4, and a 32-byte output. V1 uses that output directly for value encryption. V2 uses it as a key-encryption key (KEK). A fresh random 32-byte data-encryption key (DEK) encrypts values and is generated exactly once when a new v2 vault is initialized.
+
+V2 wraps the DEK with AES-256-GCM under the KEK, a fresh 12-byte nonce, and associated data `xvault:v2:dek`. `encrypted_key` is URL-safe base64 of:
+
+```text
+nonce (12 bytes) || encrypted DEK (32 bytes) || GCM tag (16 bytes)
+```
 
 Each marked value uses AES-256-GCM with a new random 12-byte nonce. The stored payload is URL-safe base64 of:
 
@@ -85,7 +101,7 @@ Each marked value uses AES-256-GCM with a new random 12-byte nonce. The stored p
 nonce (12 bytes) || AES-GCM ciphertext-and-tag
 ```
 
-The `enc:` prefix and the payload do not contain an explicit per-token version. AES-GCM is invoked without associated data. A wrong key or changed payload fails authentication during decryption. Do not treat an example placeholder as real ciphertext; only values produced with the corresponding key can decrypt.
+The `enc:` prefix and payload do not contain a per-token version; metadata selects the crypto implementation. Secret AES-GCM is invoked with no associated data in both v1 and v2. Field identity authentication is deliberately not part of v2. A wrong key or changed payload fails authentication during decryption.
 
 ## Format-specific behavior
 
@@ -106,6 +122,6 @@ When an OpenVPN value is set with encryption, each supplied line is encrypted in
 
 ## Compatibility and limits
 
-Only crypto version 1 is accepted. A different `crypto_version` in metadata is rejected. The code does not establish a broader compatibility guarantee or a multi-version migration protocol.
+Crypto versions 1 and 2 are accepted; other versions are rejected. Existing v1 files are never upgraded implicitly. `xvault upgrade FILE` performs the explicit v1-to-v2 migration and re-encrypts marked values under a fresh DEK. V2 password rotation only rewraps the existing DEK, leaving every secret ciphertext unchanged.
 
 The file structure outside marked values is not authenticated by the value encryption. Marker matching is regex-based and can be affected by unsupported quoting or delimiter arrangements. Comments and formatting can also change when handlers serialize JSON, YAML, or metadata. Use `validate` and review the resulting diff before committing.

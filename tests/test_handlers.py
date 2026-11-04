@@ -23,13 +23,17 @@ def encode_meta(meta_dict):
 
 def test_handler_json_parse_removes_meta_and_loads_it():
     handler = HandlerJson()
-    text = '{\n  "_xvault": "' + encode_meta({"crypto_version": 2, "salt": "abcd", "check": "enc:test"}) + '",\n  "name": "value"\n}'
+    text = '{\n  "_xvault": "' + encode_meta({
+        "crypto_version": 2,
+        "salt": "00" * 16,
+        "encrypted_key": base64.urlsafe_b64encode(b"x" * 60).decode(),
+    }) + '",\n  "name": "value"\n}'
 
     meta, parsed = handler.parse(text)
 
     assert meta.crypto_version == 2
-    assert meta.salt == "abcd"
-    assert meta.check == "enc:test"
+    assert meta.salt == "00" * 16
+    assert meta.encrypted_key == base64.urlsafe_b64encode(b"x" * 60).decode()
     assert META_VARIABLE not in parsed
     assert '"name": "value"' in parsed
 

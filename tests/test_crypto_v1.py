@@ -83,11 +83,11 @@ def test_crypto_v1_replaces_password_and_clears_ciphertext_cache():
 
 
 def test_xvault_selects_v1_and_rejects_an_unsupported_crypto_version(tmp_path, monkeypatch):
-    monkeypatch.setattr("xvault.xvault.hash_secret_raw", fast_deriver)
+    fixture = Path(__file__).parent / "fixtures" / "v1.env"
     path = tmp_path / "vault.env"
-    path.write_text("VALUE=visible\n", encoding="utf-8")
+    path.write_bytes(fixture.read_bytes())
 
-    vault = XVault(str(path), password="test-password")
+    vault = XVault(str(path), password="fixture-password", no_cache_key=True)
 
     assert isinstance(vault._crypto, CryptoV1)
     vault._meta.crypto_version = 2
@@ -108,17 +108,16 @@ def test_xvault_decrypts_fixed_v1_file_fixture(tmp_path):
 
 
 def test_rekey_keeps_the_v1_salt_and_reencrypts_values(tmp_path, monkeypatch):
-    monkeypatch.setattr("xvault.xvault.hash_secret_raw", fast_deriver)
+    fixture = Path(__file__).parent / "fixtures" / "v1.env"
     path = tmp_path / "vault.env"
-    path.write_text("VALUE=visible\n", encoding="utf-8")
-    vault = XVault(str(path), password="old-password")
-    vault.set("SECRET", "secret value")
+    path.write_bytes(fixture.read_bytes())
+    vault = XVault(str(path), password="fixture-password", no_cache_key=True)
     original_salt = vault._meta.salt
 
     vault.rekey("new-password")
 
     assert vault._meta.salt == original_salt
-    assert XVault(str(path), password="new-password").get("SECRET") == "secret value"
+    assert XVault(str(path), password="new-password", no_cache_key=True).get("SECRET") == "fixture-secret"
     old_password_vault = XVault(str(path), password="old-password", no_cache_key=True)
     with pytest.raises(ValueError, match="invalid password"):
         old_password_vault._validate_password()

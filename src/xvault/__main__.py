@@ -247,6 +247,24 @@ def rekey(
     xvault = XVault(path, password = password, no_cache_key = no_cache_key)
     # action
     xvault.rekey(new_password)
+
+
+@command("Upgrade a v1 vault to v2", examples=[
+    "xvault upgrade ./dev.json",
+])
+def upgrade(
+        path: Annotated[str, Argument("PATH")],
+        no_cache_key: Annotated[bool, Flag('n', "no-cache-key")] = False
+    ):
+    if not os.path.exists(path):
+        error(f"File '{path}' not found.")
+        return -1
+    # Migration always requires the original password again: a cached v1 key
+    # cannot be converted back into the password needed for the new v2 KEK.
+    password = ask_password()
+    xvault = XVault(path, password=password, no_cache_key=no_cache_key)
+    xvault.upgrade(password)
+    print(f"File '{path}' upgraded to crypto version 2.")
     
 
 # validate

@@ -16,7 +16,7 @@ pip install -e .
 python -m xvault version
 ```
 
-xvault requires Python 3.11 or later. Its runtime dependencies are installed with the package.
+xvault requires Python 3.12 or later. Its runtime dependencies are installed with the package.
 
 ## Quick start
 
@@ -39,7 +39,7 @@ Exports go to standard output. Redirecting them creates plaintext files, so keep
 
 ## CLI commands
 
-Commands prompt for a password when the file is locked or uninitialized. The `--no-cache-key` (`-n`) option on the commands below prevents reading or writing the OS-keyring cache for that invocation.
+Commands prompt for a password when the file is locked or uninitialized. New vaults use crypto v2; existing v1 vaults continue to work without automatic migration. The `--no-cache-key` (`-n`) option prevents reading, writing, or deleting OS-keyring entries for that invocation.
 
 ### `edit`
 
@@ -139,11 +139,19 @@ xvault lock dev.env
 xvault rekey PATH [--no-cache-key]
 ```
 
-Prompts for a new password (with confirmation), decrypts the marked values, and saves them under a newly derived key and salt.
+Prompts for a new password with confirmation. For v1 this retains the historical full value re-encryption behavior. For v2 it generates a new salt and KEK and rewraps the existing DEK; marked-value ciphertext does not change.
 
 ```bash
 xvault rekey dev.env
 ```
+
+### `upgrade`
+
+```text
+xvault upgrade PATH [--no-cache-key]
+```
+
+Explicitly migrates an initialized v1 vault to v2. It asks for the password again even if v1 is unlocked, because the cached v1 derived key cannot recover the password needed to derive a v2 KEK. Migration creates a fresh DEK, re-encrypts marked values, verifies the candidate, and atomically replaces the file. Running it on a v2 file is an error.
 
 ### `version`
 
@@ -182,7 +190,7 @@ Use `export` only for the short period a consuming tool needs plaintext. It does
 
 ## Key caching
 
-After `unlock`, xvault stores the derived key—not the password—in the OS keyring under a file-specific entry. A later command can use it without a password prompt. `lock` removes that entry, and `--no-cache-key` disables both cache reads and writes for one invocation.
+After `unlock`, xvault stores a derived key—not the password—in a file-specific OS-keyring entry. V1 caches its value-encryption key. V2 caches the KEK, never the DEK; the cached KEK must still authenticate and unwrap the stored DEK. V1 and v2 use distinct cache identities. `lock` removes the active version's entry, and `--no-cache-key` disables cache reads, writes, and deletion for one invocation.
 
 Some keyring backends are unavailable or unsuitable in SSH, CI, container, WSL, or headless sessions. In those environments, expect password prompts or use `--no-cache-key`; do not assume a cache exists.
 

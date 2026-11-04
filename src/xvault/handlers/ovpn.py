@@ -18,7 +18,7 @@ class HandlerOvpn(HandlerBase):
         _xvault_match = re.search(r'^#\s*' + META_VARIABLE + r'\s*=\s*(.+)$', text, re.MULTILINE)
         _xvault_value = _xvault_match.group(1).strip() if _xvault_match else None
         if _xvault_value is None:
-            meta = XVaultMeta(schema_version=1, crypto_version=1, salt=None, check=None)
+            meta = XVaultMeta.new(schema_version=1)
         elif _xvault_value.startswith(META_VARIABLE_PREFIX):
             decoded = base64.urlsafe_b64decode(_xvault_value[len(META_VARIABLE_PREFIX):])
             meta_json = decoded.decode()

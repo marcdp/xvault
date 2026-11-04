@@ -27,7 +27,7 @@ class HandlerMd(HandlerBase):
             text = text.lstrip()  # remove leading empty lines if exists
         if _xvault_value is None:
             # default meta
-            meta = XVaultMeta(schema_version = 1, crypto_version  = 1, salt = None, check = None)
+            meta = XVaultMeta.new(schema_version=1)
         else:
             # decode meta
             if _xvault_value.startswith(META_VARIABLE_PREFIX):
