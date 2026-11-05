@@ -1,5 +1,6 @@
 import base64
 import binascii
+import re
 from typing import Optional
 
 
@@ -60,6 +61,10 @@ class XVaultMeta:
             encrypted_key = data.get("encrypted_key")
             if not isinstance(salt, str) or not salt:
                 raise ValueError("Unable to load vault meta: v2 salt is missing")
+            if len(salt) != 32:
+                raise ValueError("Unable to load vault meta: v2 salt must be 16 bytes")
+            if not re.fullmatch(r"[0-9a-fA-F]{32}", salt):
+                raise ValueError("Unable to load vault meta: v2 salt is not hexadecimal")
             try:
                 salt_raw = bytes.fromhex(salt)
             except ValueError as error:
@@ -68,6 +73,8 @@ class XVaultMeta:
                 raise ValueError("Unable to load vault meta: v2 salt must be 16 bytes")
             if not isinstance(encrypted_key, str) or not encrypted_key:
                 raise ValueError("Unable to load vault meta: v2 encrypted_key is missing")
+            if not re.fullmatch(r"[A-Za-z0-9_-]*={0,2}", encrypted_key):
+                raise ValueError("Unable to load vault meta: v2 encrypted_key is invalid")
             try:
                 wrapped = base64.b64decode(
                     encrypted_key.encode("ascii"), altchars=b"-_", validate=True

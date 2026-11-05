@@ -93,9 +93,10 @@ class XVault():
         # decrypt
         text = self._decrypt(self._text)
         format = self._path.suffix.lstrip(".")
+        crypto_version = self._meta.crypto_version
         # edit
         xeditor = XEditor()
-        result = xeditor.editText(text, format = format, title = f"Editing secrets in {self._path.resolve()}")
+        result = xeditor.editText(text, format = format, title = f"Editing secrets in {self._path.resolve()} (v{crypto_version})")
         # apply changes
         if result != None:
             # encrypt
@@ -114,15 +115,21 @@ class XVault():
 
     def set(self, name: str, value: str, encrypt:bool = True):
         original_text = self._text
-        # Encrypt only the incoming value. Encrypting the complete document here
-        # would encrypt ciphertext already present in other fields a second time.
-        if encrypt:
-            if isinstance(self._handler, HandlerOvpn):
-                value = "\n".join(self._encrypt_value(line) for line in value.splitlines())
-            else:
-                value = self._encrypt_value(value)
-        # set value
-        text = self._handler.setValue(self._text, name, value, encrypt)
+        initializing = self.is_unitialized() and encrypt
+        if initializing:
+            # Add the incoming plaintext marker first, then initialize every
+            # marker exactly once with the same newly generated v2 DEK.
+            text = self._handler.setValue(self._text, name, value, True)
+            text = self._encrypt(text)
+        else:
+            # Initialized vaults must encrypt only the incoming value so existing
+            # ciphertext remains byte-for-byte unchanged.
+            if encrypt:
+                if isinstance(self._handler, HandlerOvpn):
+                    value = "\n".join(self._encrypt_value(line) for line in value.splitlines())
+                else:
+                    value = self._encrypt_value(value)
+            text = self._handler.setValue(self._text, name, value, encrypt)
         # save
         self._text = text
         try:

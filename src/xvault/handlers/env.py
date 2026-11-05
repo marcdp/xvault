@@ -6,7 +6,7 @@ from typing import Optional
 
 from dotenv import dotenv_values
 
-from .base import HandlerBase
+from .base import HandlerBase, decode_meta
 from ..meta import (
     ENC_PREFIX,
     META_VARIABLE,
@@ -18,23 +18,22 @@ from ..meta import (
 
 class HandlerEnv(HandlerBase):
     def parse(self, text: str) -> tuple[XVaultMeta, str]:
-        _xvault_match = re.search(r'^' + META_VARIABLE + r'\s*=\s*(.+)$', text, re.MULTILINE)
-        _xvault_value = _xvault_match.group(1) if _xvault_match else None
-        if _xvault_value is None:
+        matches = list(re.finditer(
+            r'^[ \t]*' + META_VARIABLE + r'[ \t]*=[ \t]*([^\r\n]*)\r?$',
+            text,
+            re.MULTILINE,
+        ))
+        if len(matches) > 1:
+            raise ValueError("Unable to load vault meta: duplicate _xvault entries")
+        if not matches:
             # default meta
             meta = XVaultMeta.new(schema_version=1)
-        elif _xvault_value.startswith(META_VARIABLE_PREFIX):
-            # decode meta
-            decoded = base64.urlsafe_b64decode(_xvault_value[len(META_VARIABLE_PREFIX):])
-            meta_json = decoded.decode()
-            meta_dict = json.loads(meta_json)
-            meta = XVaultMeta.from_dict(schema_version=1, data= meta_dict)
-            # replace meta variable with empty line in text
-            text = text.replace(f"# {META_VARIABLE_COMMENTS}\n", "")
-            text = re.sub(r'^' + META_VARIABLE + r'\s*=\s*.+$', "", text, count=1, flags=re.MULTILINE)
-            text = text.lstrip("\n")  # remove leading empty lines if exists
         else:
-            raise ValueError("Unable to load vault meta: invalid _xvault format")
+            meta = decode_meta(matches[0].group(1).strip())
+            # replace meta variable with empty line in text
+            text = text[:matches[0].start()] + text[matches[0].end():]
+            text = text.replace(f"# {META_VARIABLE_COMMENTS}\n", "")
+            text = text.lstrip("\n")  # remove leading empty lines if exists
         # return
         return (meta, text)
     def replace_enc_tokens(self, text: str, replacer):

@@ -40,7 +40,7 @@ URL=https://user:${enc:plain-value-before-edit}@example.test/db
 
 Marker matching is textual, not a general parser. Marker content must be nonempty and single-line. In JSON, JSONC, YAML, and Markdown, an unwrapped marker stops at a double quote or line break. In ENV it also stops at `#` or a single quote. In OpenVPN, unwrapped `enc:` values are recognized only at the start of a line; wrapped markers may appear inline. Delimiters inside a secret therefore require the wrapped form where it is supported, or a format-safe representation such as base64.
 
-`set` encrypts the supplied value before saving it and keeps the `enc:` marker on disk. With `--no-encrypt`, it intentionally stores the supplied value without a marker as plaintext.
+`set` encrypts the supplied value before saving it and keeps the `enc:` marker on disk. If the vault is uninitialized, the first encrypting `set` encrypts all existing plaintext `enc:` markers together with the new value before atomically writing v2 metadata. Once initialized, `set` encrypts only the supplied value and does not re-encrypt unrelated ciphertext. With `--no-encrypt`, it intentionally stores the supplied value without a marker as plaintext and does not initialize the vault.
 
 ## Variable references
 
@@ -70,7 +70,7 @@ New vaults use v2:
 }
 ```
 
-`schema_version` remains fixed at 1 in the handlers and is reported by `info`, but is not written into this JSON object. Both salts are 16 random bytes represented as 32 hexadecimal characters. V1's `check` encrypts a known internal value. V2 authenticates a credential by unwrapping `encrypted_key` and never writes `check`. Missing or malformed required v2 fields are errors, not an invitation to create a replacement key.
+`schema_version` remains fixed at 1 in the handlers and is reported by `info`, but is not written into this JSON object. Both salts are 16 random bytes represented as 32 hexadecimal characters. V1's `check` encrypts a known internal value. V2 authenticates a credential by unwrapping `encrypted_key` and never writes `check`. Missing or malformed required v2 fields are errors, not an invitation to create a replacement key. An absent `_xvault` field identifies an uninitialized vault; a present empty, invalidly encoded, duplicate, or otherwise malformed field is a load error and is never replaced with new metadata.
 
 Metadata placement is format-specific:
 

@@ -1,5 +1,6 @@
 import base64
 import json
+import json5
 import pytest
 
 from xvault.xvault import (
@@ -36,6 +37,24 @@ def test_handler_json_parse_removes_meta_and_loads_it():
     assert meta.encrypted_key == base64.urlsafe_b64encode(b"x" * 60).decode()
     assert META_VARIABLE not in parsed
     assert '"name": "value"' in parsed
+
+
+def test_handler_jsonc_parse_preserves_comments_around_top_level_meta():
+    handler = HandlerJsonc()
+    text = (
+        "{// before\n"
+        '  "_xvault": "' + encode_meta({"salt": "abcd", "check": None}) + '",\n'
+        "  // retained\n"
+        '  "name": "value"\n'
+        "}"
+    )
+
+    meta, parsed = handler.parse(text)
+
+    assert meta.crypto_version == 1
+    assert "// retained" in parsed
+    assert META_VARIABLE not in parsed
+    assert json5.loads(parsed) == {"name": "value"}
 
 
 def test_handler_env_get_value_reads_plain_values():
@@ -131,6 +150,47 @@ def test_handler_ovpn_parse_extracts_meta_and_removes_meta_lines():
     assert meta.salt == "abcd"
     assert "_xvault" not in parsed
     assert parsed == "client\n"
+
+
+@pytest.mark.parametrize(
+    ("handler", "text"),
+    [
+        (HandlerEnv(), "_xvault=\n"),
+        (HandlerEnv(), "_xvault=xvault:not-valid-base64!\n"),
+        (HandlerJson(), '{"_xvault": ""}'),
+        (HandlerJson(), '{"_xvault": {}}'),
+        (HandlerJsonc(), '{// comment\n"_xvault": null}'),
+        (HandlerYaml(), "_xvault:\n"),
+        (HandlerYaml(), "_xvault:\n  crypto_version: 2\n"),
+        (HandlerMd(), "---\n_xvault:\n---\n# Secrets\n"),
+        (HandlerOvpn(), "# _xvault=invalid-value\n"),
+    ],
+)
+def test_handler_rejects_present_malformed_metadata(handler, text):
+    with pytest.raises(ValueError, match="^Unable to load vault meta:"):
+        handler.parse(text)
+
+
+@pytest.mark.parametrize(
+    ("handler", "text"),
+    [
+        (HandlerEnv(), "_xvault=invalid\n_xvault=also-invalid\n"),
+        (HandlerJson(), '{"_xvault": "invalid", "_xvault": "also-invalid"}'),
+        (HandlerYaml(), "_xvault: invalid\n_xvault: also-invalid\n"),
+        (HandlerMd(), "---\n_xvault: invalid\n_xvault: also-invalid\n---\n"),
+        (HandlerOvpn(), "# _xvault=invalid\n# _xvault=also-invalid\n"),
+    ],
+)
+def test_handler_rejects_duplicate_metadata(handler, text):
+    with pytest.raises(ValueError, match="duplicate _xvault"):
+        handler.parse(text)
+
+
+def test_markdown_body_metadata_name_is_not_front_matter():
+    meta, parsed = HandlerMd().parse("# Notes\n_xvault: invalid\n")
+
+    assert not meta.metadata_present
+    assert parsed == "# Notes\n_xvault: invalid\n"
 
 
 def test_handler_ovpn_replace_enc_tokens_replaces_inline_secret_blocks():

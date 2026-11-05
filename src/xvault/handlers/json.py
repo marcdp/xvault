@@ -5,7 +5,7 @@ from typing import Optional
 
 import json5
 
-from .base import HandlerBase
+from .base import HandlerBase, decode_meta
 from ..meta import (
     ENC_PREFIX,
     META_VARIABLE,
@@ -15,31 +15,118 @@ from ..meta import (
 )
 
 
+def _skip_json5_space(text: str, index: int) -> int:
+    while index < len(text):
+        if text[index].isspace():
+            index += 1
+        elif text.startswith("//", index):
+            newline = text.find("\n", index + 2)
+            index = len(text) if newline < 0 else newline + 1
+        elif text.startswith("/*", index):
+            end = text.find("*/", index + 2)
+            index = len(text) if end < 0 else end + 2
+        else:
+            break
+    return index
+
+
+def _scan_json5_string(text: str, index: int) -> int:
+    quote = text[index]
+    index += 1
+    while index < len(text):
+        if text[index] == "\\":
+            index += 2
+        elif text[index] == quote:
+            return index + 1
+        else:
+            index += 1
+    return index
+
+
+def _top_level_property_spans(text: str, name: str) -> list[tuple[int, int]]:
+    """Locate a JSON5 top-level property without matching nested occurrences."""
+    spans = []
+    index = _skip_json5_space(text, 0)
+    if index >= len(text) or text[index] != "{":
+        return spans
+    index += 1
+    previous_comma = None
+    while index < len(text):
+        entry_start = index
+        index = _skip_json5_space(text, index)
+        if index >= len(text) or text[index] == "}":
+            break
+        if text[index] in "\"'":
+            key_end = _scan_json5_string(text, index)
+            try:
+                key = json5.loads(text[index:key_end])
+            except ValueError:
+                return spans
+            index = key_end
+        else:
+            key_match = re.match(r"[A-Za-z_$][A-Za-z0-9_$]*", text[index:])
+            if not key_match:
+                return spans
+            key = key_match.group(0)
+            index += len(key)
+        index = _skip_json5_space(text, index)
+        if index >= len(text) or text[index] != ":":
+            return spans
+        index += 1
+        depth = 0
+        while index < len(text):
+            char = text[index]
+            if char in "\"'":
+                index = _scan_json5_string(text, index)
+                continue
+            if text.startswith("//", index) or text.startswith("/*", index):
+                index = _skip_json5_space(text, index)
+                continue
+            if char in "[{(":
+                depth += 1
+            elif char in "]})":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif char == "," and depth == 0:
+                break
+            index += 1
+        has_trailing_comma = index < len(text) and text[index] == ","
+        if key == name:
+            start = entry_start
+            end = index + 1 if has_trailing_comma else index
+            if not has_trailing_comma and previous_comma is not None:
+                start = previous_comma
+            spans.append((start, end))
+        if has_trailing_comma:
+            previous_comma = index
+            index += 1
+        else:
+            break
+    return spans
+
+
 class HandlerJson(HandlerBase):
     def parse(self, text: str) -> tuple[XVaultMeta, str]:
-        # extract meta
-        _xvault_match = re.search(r'"' + META_VARIABLE + r'"\s*:\s*"([^"]+)"', text)
-        _xvault_value = _xvault_match.group(1) if _xvault_match else None
-        if _xvault_value is None:
+        spans = _top_level_property_spans(text, META_VARIABLE)
+        if len(spans) > 1:
+            raise ValueError("Unable to load vault meta: duplicate _xvault entries")
+        if not spans:
             # default meta
             meta = XVaultMeta.new(schema_version=1)
         else:
-            # constants
-            indent = " " * self.detect_json_indentation(text)
-            # decode meta
-            if _xvault_value.startswith(META_VARIABLE_PREFIX):
-                decoded = base64.urlsafe_b64decode(_xvault_value[len(META_VARIABLE_PREFIX):])
-                meta_json = decoded.decode()
-                meta_dict = json.loads(meta_json)
-                meta = XVaultMeta.from_dict(schema_version=1, data= meta_dict)
-            else:
-                raise ValueError("Unable to load vault meta: invalid _xvault format")
+            try:
+                data = json5.loads(text)
+            except ValueError as error:
+                raise ValueError("Unable to load vault meta: invalid JSON document") from error
+            if not isinstance(data, dict) or META_VARIABLE not in data:
+                raise ValueError("Unable to load vault meta: invalid _xvault property")
+            meta = decode_meta(data[META_VARIABLE])
             # remove meta variable from text
-            text = re.sub(r'"' + META_VARIABLE + r'"\s*:\s*"([^"]+)"\s*,?', '', text, count=1)
+            start, end = spans[0]
+            text = text[:start] + text[end:]
             # remove meta comments if exists
             text = text.replace(f"// {META_VARIABLE_COMMENTS}\n", "")
-            # remove leading empty lines if exists
-            text = f"{{\n{indent}\n{indent}" + text.lstrip("{").lstrip()
         # return
         return (meta, text)
     def replace_enc_tokens(self, text: str, replacer):

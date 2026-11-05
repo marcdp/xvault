@@ -73,7 +73,7 @@ xvault get dev.env DATABASE_URL --resolve
 xvault set PATH KEY VALUE [--no-encrypt] [--no-cache-key]
 ```
 
-Sets a value in JSON, YAML, ENV, or OpenVPN files. By default the new value is encrypted immediately and saved with its `enc:` marker. `--no-encrypt` (`-e`) intentionally writes the supplied value as plaintext.
+Sets a value in JSON, YAML, ENV, or OpenVPN files. By default the new value is encrypted immediately and saved with its `enc:` marker. On an uninitialized file, this first encrypting `set` also encrypts every existing plaintext `enc:` marker before metadata is written, using the same new v2 DEK. `--no-encrypt` (`-e`) intentionally writes the supplied value as plaintext and does not initialize the vault.
 
 ```bash
 xvault set dev.env DB_PASS 'new-password'

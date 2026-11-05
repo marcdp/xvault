@@ -3,7 +3,8 @@ import json
 import re
 from typing import Optional
 
-from .base import HandlerBase
+from .base import HandlerBase, decode_meta
+from .yaml import find_top_level_meta, yaml_meta_value
 from ..meta import (
     META_VARIABLE,
     META_VARIABLE_COMMENTS,
@@ -17,26 +18,19 @@ class HandlerMd(HandlerBase):
         # extract meta from Markdown (---\n_xvault: enc:....\n---\n")
         front_matter_match = m = re.match(r'^---\r?\n(.*?)\r?\n---\r?\n?', text, re.DOTALL)
         front_matter_value = front_matter_match.group(1) if m else None
-        _xvault_value = None
-        if front_matter_value:
-            # decode xvault meta from front matter
-            _xvault_match = re.search(r'' + META_VARIABLE + r'\s*:\s*([^"\r\n]+)', front_matter_value)
-            _xvault_value = _xvault_match.group(1) if _xvault_match else None
+        entries = []
+        if front_matter_value is not None:
+            entries = find_top_level_meta(front_matter_value)
+            if len(entries) > 1:
+                raise ValueError("Unable to load vault meta: duplicate _xvault entries")
             # extract meta from front matter
             text = text[front_matter_match.end():]  # remove front matter from text
             text = text.lstrip()  # remove leading empty lines if exists
-        if _xvault_value is None:
+        if not entries:
             # default meta
             meta = XVaultMeta.new(schema_version=1)
         else:
-            # decode meta
-            if _xvault_value.startswith(META_VARIABLE_PREFIX):
-                decoded = base64.urlsafe_b64decode(_xvault_value[len(META_VARIABLE_PREFIX):])
-                meta_json = decoded.decode()
-                meta_dict = json.loads(meta_json)
-                meta = XVaultMeta.from_dict(schema_version=1, data= meta_dict)
-            else:
-                raise ValueError("Unable to load vault meta: invalid _xvault format")
+            meta = decode_meta(yaml_meta_value(entries[0][1]))
             # remove leading empty lines if exists
             text = text.lstrip()
         # return

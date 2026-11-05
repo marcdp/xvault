@@ -174,6 +174,21 @@ def test_validate_prints_checks(patch_exists, patch_vault, capsys):
     assert "Status: ok" in out.out
 
 
+def test_validate_reports_malformed_metadata_from_parse_probe(
+    monkeypatch, patch_exists, capsys
+):
+    class MalformedVault(FakeVault):
+        @staticmethod
+        def is_locked_file(path):
+            raise ValueError("Unable to load vault meta: invalid _xvault format")
+
+    monkeypatch.setattr(cli, "XVault", MalformedVault)
+
+    assert cli.validate("any.env") == -1
+    output = capsys.readouterr()
+    assert "Unable to load vault meta:" in output.err
+
+
 def test_set_does_not_echo_secret(patch_exists, patch_vault, capsys):
     secret = "do-not-echo-this"
 

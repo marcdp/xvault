@@ -280,12 +280,11 @@ def validate(
     if not os.path.exists(path):
         error(f"File '{path}' not found.")
         return -1
-    # ask for password if interactive and not provided
-    password = None
-    if no_cache_key or XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
-        password = ask_password()
-    # action
     try:
+        # Parse probes belong inside validation's error boundary.
+        password = None
+        if no_cache_key or XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
+            password = ask_password()
         xvault = XVault(path, password = password, no_cache_key = no_cache_key)
         result = xvault.validate()
     except Exception as e:

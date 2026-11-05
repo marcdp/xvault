@@ -4,8 +4,9 @@ import re
 from typing import Optional
 
 import yaml
+from yaml.nodes import MappingNode, ScalarNode
 
-from .base import HandlerBase
+from .base import HandlerBase, decode_meta
 from ..meta import (
     ENC_PREFIX,
     META_VARIABLE,
@@ -15,25 +16,42 @@ from ..meta import (
 )
 
 
+def find_top_level_meta(text: str):
+    try:
+        root = yaml.compose(text)
+    except yaml.YAMLError as error:
+        raise ValueError("Unable to load vault meta: invalid YAML document") from error
+    if not isinstance(root, MappingNode):
+        return []
+    return [
+        (key, value)
+        for key, value in root.value
+        if isinstance(key, ScalarNode) and key.value == META_VARIABLE
+    ]
+
+
+def yaml_meta_value(node) -> str:
+    if not isinstance(node, ScalarNode) or node.tag != "tag:yaml.org,2002:str":
+        raise ValueError("Unable to load vault meta: _xvault must be a string")
+    return node.value
+
+
 class HandlerYaml(HandlerBase):
     def parse(self, text: str) -> tuple[XVaultMeta, str]:
-        # extract meta from YAML (_xvault: enc:....\n")
-        _xvault_match = re.search(r'' + META_VARIABLE + r'\s*:\s*([^"\r\n]+)', text)
-        _xvault_value = _xvault_match.group(1) if _xvault_match else None
-        if _xvault_value is None:
+        entries = find_top_level_meta(text)
+        if len(entries) > 1:
+            raise ValueError("Unable to load vault meta: duplicate _xvault entries")
+        if not entries:
             # default meta
             meta = XVaultMeta.new(schema_version=1)
         else:
-            # decode meta
-            if _xvault_value.startswith(META_VARIABLE_PREFIX):
-                decoded = base64.urlsafe_b64decode(_xvault_value[len(META_VARIABLE_PREFIX):])
-                meta_json = decoded.decode()
-                meta_dict = json.loads(meta_json)
-                meta = XVaultMeta.from_dict(schema_version=1, data= meta_dict)
-            else:
-                raise ValueError("Unable to load vault meta: invalid _xvault format")
-            # remove meta variable from text
-            text = re.sub(r'' + META_VARIABLE + r'\s*:\s*([^"\r\n]+)', '', text, count=1)
+            key_node, value_node = entries[0]
+            meta = decode_meta(yaml_meta_value(value_node))
+            # remove the complete top-level metadata entry
+            start = key_node.start_mark.index
+            end = text.find("\n", value_node.end_mark.index)
+            end = len(text) if end < 0 else end + 1
+            text = text[:start] + text[end:]
             # remove meta comments if exists
             text = text.replace(f"# {META_VARIABLE_COMMENTS}\n", "")
             # remove leading empty lines if exists
