@@ -133,7 +133,7 @@ def test_handler_md_parse_extracts_front_matter_meta():
 
     assert isinstance(meta, XVaultMeta)
     assert meta.salt == "abcd"
-    assert parsed == "# Title\n"
+    assert parsed == "---\n---\n\n# Title\n"
 
 
 def test_handler_ovpn_parse_extracts_meta_and_removes_meta_lines():

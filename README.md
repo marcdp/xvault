@@ -69,9 +69,23 @@ Verified handlers are available for `.json`, `.jsonc`, `.yaml`, `.yml`, `.env`, 
 - [File-format reference](docs/reference.md)
 - [Internals and security model](docs/internals.md)
 
+CryptoV1 files remain readable and writable and are upgraded only by the explicit
+`xvault upgrade` command. New vaults use CryptoV2 envelope encryption: a
+password-derived key protects a random data key, and that data key encrypts the
+marked values. The versioned file contract is documented in the
+[reference](docs/reference.md#interoperability-contract).
+
 ## Security
 
 xvault encrypts marked values and authenticates their ciphertext, but it does not make plaintext configuration trustworthy, protect a compromised machine, or make plaintext exports safe. Use a strong unique password and consider `--no-cache-key` on shared, remote, or headless systems. Read the [security model](docs/internals.md#security-model) and [vulnerability-reporting policy](SECURITY.md).
+
+## Verification
+
+The test suite covers CryptoV1 and CryptoV2 fixtures, password rotation,
+explicit migration, metadata failure handling, transactional writes, CLI
+behavior, and every supported handler. CI tests Python 3.12 and 3.13 on Linux,
+plus Python 3.12 compatibility on Windows and macOS, and validates wheel and
+source distributions.
 
 ## Roadmap
 

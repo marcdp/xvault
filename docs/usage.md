@@ -47,7 +47,7 @@ Commands prompt for a password when the file is locked or uninitialized. New vau
 xvault edit PATH [KEY] [--no-cache-key]
 ```
 
-Edits the decrypted document in xvault's terminal editor, then encrypts marked values when the edit is saved. With `KEY`, it invokes the implementation's single-secret edit path.
+Edits the decrypted document in xvault's terminal editor, then encrypts marked values when the edit is saved. With `KEY`, xvault opens only that plaintext value and saves it through the normal `set` path. This form is supported for JSON, YAML, ENV, and OpenVPN; JSONC and Markdown do not provide safe keyed updates. Canceling makes no change, and an unchanged value is not rewritten. Unrelated ciphertext remains byte-for-byte unchanged.
 
 ```bash
 xvault edit dev.yaml
@@ -108,15 +108,23 @@ xvault info dev.env
 ### `validate`
 
 ```text
-xvault validate PATH [--verbose] [--no-cache-key]
+xvault validate PATH [--strict] [--verbose] [--no-cache-key]
 ```
 
-Loads the file and reports parser, metadata, lock-status, and decryption checks. `--verbose` (`-v`) is accepted by the CLI; the current command output does not vary by that flag.
+Loads the file and reports parser, metadata, lock-status, and decryption checks. `--verbose` (`-v`) adds non-sensitive crypto-version, metadata, credential, decryption, and marked-secret-count diagnostics.
 
 The overall status is `error` if any check is an error, `warning` if there are warnings but no errors, and `ok` otherwise. `ok` and `warning` exit with code 0; `error` exits nonzero.
 
+Default validation retains that compatibility policy: a locked or uninitialized
+vault may report `warning` and exit successfully because parsing completed while
+authentication was unavailable. `--strict` (`-s`) requires credential
+authentication and decryption of every marked value. It fails for locked,
+uninitialized, corrupt, or unauthenticated input and succeeds only after full
+cryptographic verification.
+
 ```bash
 xvault validate dev.env --no-cache-key
+xvault validate dev.env --strict --verbose --no-cache-key
 ```
 
 ### `unlock` and `lock`
@@ -195,9 +203,36 @@ Use `export` only for the short period a consuming tool needs plaintext. It does
 
 ## Key caching
 
-After `unlock`, xvault stores a derived key—not the password—in a file-specific OS-keyring entry. V1 caches its value-encryption key. V2 caches the KEK, never the DEK; the cached KEK must still authenticate and unwrap the stored DEK. V1 and v2 use distinct cache identities. `lock` removes the active version's entry, and `--no-cache-key` disables cache reads, writes, and deletion for one invocation.
+When an initialized vault is opened with a password and caching is enabled,
+xvault authenticates it and automatically writes the derived credential to the
+OS keyring. `unlock` performs that authentication and write explicitly. Opening
+without a password may read the file-specific entry. V1 caches its
+value-encryption key; V2 caches the KEK, never the password or DEK, and accepts it
+only if it authenticates and unwraps the stored DEK. V1 uses service identity
+`xvault:<file URI>` and V2 uses `xvault:v2:<file URI>`, both with username
+`username`.
 
-Some keyring backends are unavailable or unsuitable in SSH, CI, container, WSL, or headless sessions. In those environments, expect password prompts or use `--no-cache-key`; do not assume a cache exists.
+`lock` deletes the active version's keyring entry; it does not erase keys already
+present in the current process. `--no-cache-key` disables reads, writes, and
+deletions for that invocation and requires a supplied password at the library
+boundary. If optional caching fails after a successful save, rekey, or upgrade,
+the committed file remains valid and xvault warns that automatic unlocking may
+not work. Explicit `unlock` fails if storage fails.
+
+Windows normally uses Credential Manager, macOS normally uses Keychain, and
+Linux uses the configured Secret Service or another installed backend. Exact
+behavior belongs to the Python `keyring` backend. SSH, CI, containers, WSL, and
+headless sessions may have no usable backend; use `--no-cache-key` with an
+explicit password and never make deterministic tests depend on a platform
+keyring service.
+
+## Failure behavior
+
+Editing prepares encrypted text and any new metadata before atomically replacing
+the file. Encryption, serialization, or replacement failure leaves the prior
+file and active in-memory vault state usable; cancellation performs no write.
+Optional keyring failure after a successful commit is nonfatal and produces a
+warning. Review the saved diff before committing it.
 
 ## Common workflows
 

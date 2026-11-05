@@ -1,4 +1,5 @@
 import base64
+import copy
 from hashlib import sha256
 from pathlib import Path
 import os
@@ -98,11 +99,32 @@ class XVault():
         xeditor = XEditor()
         result = xeditor.editText(text, format = format, title = f"Editing secrets in {self._path.resolve()} (v{crypto_version})")
         # apply changes
-        if result != None:
-            # encrypt
-            self._text = self._encrypt(result)
-            # save
-            self._save()
+        if result is not None:
+            # Prepare the complete candidate on isolated state. This matters for
+            # first-time v2 initialization, where encryption creates metadata and
+            # a DEK before any bytes are written.
+            candidate_meta, candidate_crypto = copy.deepcopy((self._meta, self._crypto))
+            candidate_text = self._encrypt_with_crypto(result, candidate_crypto)
+            self._save_candidate(candidate_meta, candidate_text, candidate_crypto)
+
+    def edit_secret(self, name: str):
+        """Edit one addressable secret without rewriting unrelated ciphertext."""
+        if isinstance(self._handler, (HandlerJsonc, HandlerMd)) or not isinstance(
+            self._handler, (HandlerEnv, HandlerJson, HandlerOvpn, HandlerYaml)
+        ):
+            raise NotImplementedError(
+                f"Single-secret editing is not supported for {self._path.suffix} files"
+            )
+        value = self.get(name)
+        if value is None:
+            raise ValueError(f"Unable to edit secret: key '{name}' not found")
+        result = XEditor().editText(
+            str(value),
+            format="text",
+            title=f"Editing secret '{name}' in {self._path.resolve()}",
+        )
+        if result is not None and result != value:
+            self.set(name, result)
 
     def get(self, name: str, resolve: bool = False):
         # get value
@@ -114,29 +136,25 @@ class XVault():
         return self._handler.getValue(text, name)
 
     def set(self, name: str, value: str, encrypt:bool = True):
-        original_text = self._text
+        candidate_meta, candidate_crypto = copy.deepcopy((self._meta, self._crypto))
         initializing = self.is_unitialized() and encrypt
         if initializing:
             # Add the incoming plaintext marker first, then initialize every
             # marker exactly once with the same newly generated v2 DEK.
             text = self._handler.setValue(self._text, name, value, True)
-            text = self._encrypt(text)
+            text = self._encrypt_with_crypto(text, candidate_crypto)
         else:
             # Initialized vaults must encrypt only the incoming value so existing
             # ciphertext remains byte-for-byte unchanged.
             if encrypt:
                 if isinstance(self._handler, HandlerOvpn):
-                    value = "\n".join(self._encrypt_value(line) for line in value.splitlines())
+                    value = "\n".join(
+                        candidate_crypto.encrypt(line) for line in value.splitlines()
+                    )
                 else:
-                    value = self._encrypt_value(value)
+                    value = candidate_crypto.encrypt(value)
             text = self._handler.setValue(self._text, name, value, encrypt)
-        # save
-        self._text = text
-        try:
-            self._save()
-        except Exception:
-            self._text = original_text
-            raise
+        self._save_candidate(candidate_meta, text, candidate_crypto)
 
     def export(self, resolve: bool = False) -> str:
         # decrypt
@@ -294,14 +312,14 @@ class XVault():
                 cache_key, "Vault upgrade was saved"
             )
 
-    def validate(self):
+    def validate(self, strict: bool = False, verbose: bool = False):
         checks = [{"name": "parse", "severity": "info", "message": f"ok ({self._path.suffix})"}]
         if self.is_unitialized():
             checks.append({"name": "status", "severity": "warning", "message": "uninitialized"})
             checks.append({"name": "password-validation", "severity": "info", "message": "unavailable"})
             checks.append({"name": "decryp", "severity": "info", "message": "unavailable"})
             checks.append({"name": "decryp count", "severity": "info", "message": f"ok ({self._text.count('enc:')})"})
-            return {"status": "warning", "checks": checks}
+            return self._finalize_validation(checks, strict, verbose)
 
         if not self._meta.salt:
             checks.append({"name": "salt", "severity": "error", "message": "missing"})
@@ -350,6 +368,73 @@ class XVault():
                 else:
                     checks.append({"name": "decryp", "severity": "info", "message": "ok"})
         checks.append({"name": "decryp count", "severity": "info", "message": f"ok ({self._text.count('enc:')})"})
+        return self._finalize_validation(checks, strict, verbose)
+
+    def _finalize_validation(self, checks, strict: bool, verbose: bool):
+        if strict:
+            authenticated = any(
+                check["name"] == "password-validation"
+                and check["severity"] == "info"
+                and check["message"] == "ok"
+                for check in checks
+            )
+            decrypted = any(
+                check["name"] == "decryp"
+                and check["severity"] == "info"
+                and check["message"] == "ok"
+                for check in checks
+            )
+            checks.append(
+                {
+                    "name": "strict",
+                    "severity": "info" if authenticated and decrypted else "error",
+                    "message": (
+                        "authenticated verification complete"
+                        if authenticated and decrypted
+                        else "authenticated verification incomplete"
+                    ),
+                }
+            )
+        if verbose:
+            credential = next(
+                (c["message"] for c in checks if c["name"] == "password-validation"),
+                "unavailable",
+            )
+            secret_check = next(
+                (c["message"] for c in checks if c["name"] == "decryp"),
+                "unavailable",
+            )
+            metadata_errors = any(
+                c["severity"] == "error"
+                and c["name"] in {"salt", "salt-length", "check", "encrypted-key"}
+                for c in checks
+            )
+            metadata_message = (
+                "absent"
+                if self.is_unitialized()
+                else "invalid" if metadata_errors else "valid"
+            )
+            checks.extend(
+                [
+                    {
+                        "name": "crypto-version",
+                        "severity": "info",
+                        "message": str(self._meta.crypto_version),
+                    },
+                    {
+                        "name": "metadata",
+                        "severity": "info" if not metadata_errors else "error",
+                        "message": metadata_message,
+                    },
+                    {"name": "credentials", "severity": "info", "message": credential},
+                    {"name": "secrets", "severity": "info", "message": secret_check},
+                    {
+                        "name": "marked-secrets",
+                        "severity": "info",
+                        "message": str(self._text.count("enc:")),
+                    },
+                ]
+            )
         severities = {check["severity"] for check in checks}
         status = "error" if "error" in severities else "warning" if "warning" in severities else "ok"
         return {"status": status, "checks": checks}
@@ -456,7 +541,7 @@ class XVault():
     
     def _load(self):        
         # text
-        with open(self._path, "r", encoding="utf-8-sig") as file:
+        with open(self._path, "r", encoding="utf-8-sig", newline="") as file:
             text = file.read()
          # parse 
         (self._meta, self._text) = self._handler.parse(text)
@@ -478,6 +563,27 @@ class XVault():
         if cache_key is not None:
             self._cache_key_after_commit(cache_key, "Vault was saved")
 
+    def _save_candidate(self, meta: XVaultMeta, text: str, crypto: CryptoBase):
+        """Persist candidate edit state, then make it active."""
+        if meta.crypto_version == 1 and meta.check is None:
+            meta.check = crypto.encrypt(META_CHECK_VALUE)
+        if not meta.metadata_present and not meta.encrypted_key:
+            self._write_result(text)
+            self._meta = meta
+            self._text = text
+            self._crypto = crypto
+            return
+        cache_key = crypto.get_cacheable_key() if not self._no_cache_key else None
+        self._write_vault(meta, text)
+        meta.metadata_present = True
+        if isinstance(crypto, CryptoV2):
+            crypto.mark_persisted()
+        self._meta = meta
+        self._text = text
+        self._crypto = crypto
+        if cache_key is not None:
+            self._cache_key_after_commit(cache_key, "Vault was saved")
+
     def _write_vault(self, meta: XVaultMeta, text: str):
         self._write_result(self._handler.stringify(meta, text))
 
@@ -490,6 +596,7 @@ class XVault():
             with tempfile.NamedTemporaryFile(
                 "w",
                 encoding="utf-8",
+                newline="",
                 dir=self._path.parent,
                 prefix=f".{self._path.name}.",
                 suffix=".tmp",

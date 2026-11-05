@@ -50,7 +50,7 @@ class FakeVault:
     def set(self, key, value, encrypt=True):
         return None
 
-    def validate(self):
+    def validate(self, strict=False, verbose=False):
         return {
             "checks": [
                 {"name": "parse", "severity": "info", "message": "ok"},
@@ -174,6 +174,20 @@ def test_validate_prints_checks(patch_exists, patch_vault, capsys):
     assert "Status: ok" in out.out
 
 
+def test_validate_forwards_strict_and_verbose(monkeypatch, patch_exists):
+    calls = []
+
+    class RecordingVault(FakeVault):
+        def validate(self, strict=False, verbose=False):
+            calls.append((strict, verbose))
+            return {"checks": [], "status": "ok"}
+
+    monkeypatch.setattr(cli, "XVault", RecordingVault)
+
+    assert cli.validate("any.env", strict=True, verbose=True) is None
+    assert calls == [(True, True)]
+
+
 def test_validate_reports_malformed_metadata_from_parse_probe(
     monkeypatch, patch_exists, capsys
 ):
@@ -221,7 +235,7 @@ def test_set_no_encrypt_is_forwarded(monkeypatch, patch_exists):
 )
 def test_validate_exit_policy(monkeypatch, patch_exists, capsys, status, expected):
     class StatusVault(FakeVault):
-        def validate(self):
+        def validate(self, strict=False, verbose=False):
             return {
                 "checks": [{"name": "status", "severity": status, "message": status}],
                 "status": status,

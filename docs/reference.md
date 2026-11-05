@@ -83,7 +83,12 @@ _xvault=xvault:<base64-json>
 PASSWORD=enc:<ciphertext>
 ```
 
-Markdown writes a front-matter block; OpenVPN writes commented metadata. The metadata is removed while the file is processed and written again on save. The leading explanatory comment is informational, not part of the cryptographic format.
+Markdown writes or updates `_xvault` inside the leading YAML front-matter block.
+Unrelated keys, comments, nested values, delimiters, and body text are retained;
+a literal `_xvault` in the Markdown body is not metadata. Existing malformed or
+duplicate top-level `_xvault` fields fail safely. OpenVPN writes commented
+metadata. The leading explanatory comment is informational, not part of the
+cryptographic format.
 
 ## Encryption representation
 
@@ -125,3 +130,31 @@ When an OpenVPN value is set with encryption, each supplied line is encrypted in
 Crypto versions 1 and 2 are accepted; other versions are rejected. Existing v1 files are never upgraded implicitly. `xvault upgrade FILE` performs the explicit v1-to-v2 migration and re-encrypts marked values under a fresh DEK. V2 password rotation only rewraps the existing DEK, leaving every secret ciphertext unchanged.
 
 The file structure outside marked values is not authenticated by the value encryption. Marker matching is regex-based and can be affected by unsupported quoting or delimiter arrangements. Comments and formatting can also change when handlers serialize JSON, YAML, or metadata. Use `validate` and review the resulting diff before committing.
+
+## Interoperability contract
+
+The structures and algorithms above are the compatibility contract for
+independent readers. In particular:
+
+- Metadata JSON contains exactly the version-specific fields shown above and is
+  URL-safe-base64 encoded after `xvault:`.
+- Argon2id parameters are time cost 5, memory cost 131072 KiB, parallelism 4,
+  and 32-byte output with the 16-byte metadata salt.
+- V1 uses the derived key for values and authenticates it by decrypting `check`.
+- V2 wraps a random 32-byte DEK with the fixed AAD bytes `xvault:v2:dek`; secret
+  values use no AAD in either version.
+- Wrapped DEKs and values use `nonce || ciphertext || GCM tag` and URL-safe
+  base64. AES-GCM nonces are 12 bytes and tags are 16 bytes.
+- Rekeying V2 changes salt and wrapped-DEK metadata but preserves the DEK and
+  value ciphertext. Migration from V1 is explicit and generates a new V2 DEK.
+- Keyring identities are implementation integration details described in the
+  usage guide; they are version-separated and are not part of the file format.
+
+The independent .NET `DProjects.XVault` library in `marcdp/libs` is a read-only
+consumer of this contract; it does not have feature parity with the Python CLI.
+The committed `tests/fixtures/v1.env` and `tests/fixtures/v2.env` files are the
+canonical Python-generated fixed vectors for consumers. Python tests cover their
+valid passwords, invalid credentials, corrupted wrapped DEKs and ciphertext,
+V2 metadata-only rotation, explicit migration, and generated round trips for all
+supported formats. Downstream consumers should test these same vectors rather
+than inventing a divergent protocol representation.

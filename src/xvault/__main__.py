@@ -274,6 +274,7 @@ def upgrade(
 def validate(
         path: Annotated[str,  Argument("PATH")],
         verbose: Annotated[bool, Flag('v', "verbose")] = False,
+        strict: Annotated[bool, Flag('s', "strict")] = False,
         no_cache_key: Annotated[bool,  Flag('n', "no-cache-key")] = False
     ):
     # export
@@ -286,7 +287,7 @@ def validate(
         if no_cache_key or XVault.is_locked_file(path) or XVault.is_uninitialized_file(path):
             password = ask_password()
         xvault = XVault(path, password = password, no_cache_key = no_cache_key)
-        result = xvault.validate()
+        result = xvault.validate(strict=strict, verbose=verbose)
     except Exception as e:
         result = {
             "checks":[
