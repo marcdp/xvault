@@ -128,6 +128,11 @@ xvault lock PATH
 
 `unlock` validates the password and stores the derived key in the configured OS keyring. `lock` removes that cached key. Neither command encrypts or decrypts the file itself.
 
+Keyring caching is optional for save, rekey, and upgrade operations. If the file
+has already been committed when caching fails, xvault keeps the valid file and
+reports a warning that automatic unlocking may not work. An explicit `unlock`
+still fails if the keyring cannot store the credential.
+
 ```bash
 xvault unlock dev.env
 xvault lock dev.env

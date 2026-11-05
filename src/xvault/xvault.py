@@ -4,6 +4,7 @@ from pathlib import Path
 import os
 import re
 import tempfile
+import warnings
 from typing import Optional
 
 from argon2.low_level import hash_secret_raw
@@ -185,12 +186,13 @@ class XVault():
         # lock
         if self._no_cache_key:
             return
-        password = keyring.get_password(self._get_keyring_store_name(), self._get_keyring_store_id())
-        if not password is None:
-            try:
-                keyring.delete_password(self._get_keyring_store_name(), self._get_keyring_store_id())
-            except Exception:
-                pass
+        try:
+            keyring.delete_password(
+                self._get_keyring_store_name(), self._get_keyring_store_id()
+            )
+        except PasswordDeleteError:
+            # The requested end state is already satisfied.
+            pass
     
     def rekey(self, new_password: str):
         # rekey
@@ -208,7 +210,9 @@ class XVault():
             self._meta = rotation.meta
             crypto.activate_password_rotation(rotation)
             if not self._no_cache_key:
-                self._store_cache_key(crypto.get_cacheable_key())
+                self._cache_key_after_commit(
+                    crypto.get_cacheable_key(), "Vault password was changed"
+                )
             return
         # v1: preserve the existing full re-encryption behavior and salt.
         decrypted_text = self._decrypt(self._text)
@@ -226,9 +230,6 @@ class XVault():
         self._text = self._encrypt(decrypted_text)
         # save
         self._save()
-        # unlock
-        if not self._no_cache_key:
-            self.unlock()
 
     def upgrade(self, password: str):
         """Atomically migrate an initialized v1 vault to crypto version 2."""
@@ -254,13 +255,20 @@ class XVault():
         self._crypto = candidate_crypto
         candidate_crypto.mark_persisted()
         if not self._no_cache_key:
-            old_value = keyring.get_password(old_store_name, self._get_keyring_store_id())
-            if old_value is not None:
-                try:
-                    keyring.delete_password(old_store_name, self._get_keyring_store_id())
-                except PasswordDeleteError:
-                    pass
-            self._store_cache_key(candidate_crypto.get_cacheable_key())
+            try:
+                keyring.delete_password(old_store_name, self._get_keyring_store_id())
+            except PasswordDeleteError:
+                pass
+            except Exception:
+                warnings.warn(
+                    "Vault upgrade was saved, but the old cached credential "
+                    "could not be removed.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            self._cache_key_after_commit(
+                candidate_crypto.get_cacheable_key(), "Vault upgrade was saved"
+            )
 
     def validate(self):
         checks = [{"name": "parse", "severity": "info", "message": f"ok ({self._path.suffix})"}]
@@ -306,12 +314,17 @@ class XVault():
             checks.append({"name": "status", "severity": "info", "message": "ok (unlocked)"})
             try:
                 self._validate_password()
-                checks.append({"name": "password-validation", "severity": "info", "message": "ok"})
-                self._decrypt(self._text)
-                checks.append({"name": "decryp", "severity": "info", "message": "ok"})
-            except Exception as error:
+            except Exception:
                 checks.append({"name": "password-validation", "severity": "error", "message": "invalid password or metadata"})
-                checks.append({"name": "decryp", "severity": "error", "message": f"error: {error}"})
+                checks.append({"name": "decryp", "severity": "info", "message": "unavailable"})
+            else:
+                checks.append({"name": "password-validation", "severity": "info", "message": "ok"})
+                try:
+                    self._decrypt(self._text)
+                except Exception as error:
+                    checks.append({"name": "decryp", "severity": "error", "message": f"error: {error}"})
+                else:
+                    checks.append({"name": "decryp", "severity": "info", "message": "ok"})
         checks.append({"name": "decryp count", "severity": "info", "message": f"ok ({self._text.count('enc:')})"})
         severities = {check["severity"] for check in checks}
         status = "error" if "error" in severities else "warning" if "warning" in severities else "ok"
@@ -343,13 +356,36 @@ class XVault():
         store_id = self._get_keyring_store_id()
         try:
             keyring.set_password(store_name, store_id, encoded_key)
-        except Exception:
+        except Exception as store_error:
             # A failed refresh must not leave a now-incompatible old credential.
             try:
                 keyring.delete_password(store_name, store_id)
-            except Exception:
+            except PasswordDeleteError:
                 pass
+            except Exception as delete_error:
+                warnings.warn(
+                    "Key caching failed, and a stale cached credential could "
+                    "not be removed; automatic unlocking may not work.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                store_error.add_note(
+                    "A stale cached credential could not be removed after the "
+                    "keyring update failed."
+                )
+                raise store_error from delete_error
             raise
+
+    def _cache_key_after_commit(self, key: bytes, operation: str):
+        try:
+            self._store_cache_key(key)
+        except Exception:
+            warnings.warn(
+                f"{operation}, but key caching failed; automatic unlocking "
+                "may not work.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
     def _create_crypto(self, password: Optional[str]) -> Optional[CryptoBase]:
         loader = None
@@ -405,7 +441,9 @@ class XVault():
         if isinstance(self._crypto, CryptoV2):
             self._crypto.mark_persisted()
         if not self._no_cache_key:
-            self._store_cache_key(self._get_crypto().get_cacheable_key())
+            self._cache_key_after_commit(
+                self._get_crypto().get_cacheable_key(), "Vault was saved"
+            )
 
     def _write_vault(self, meta: XVaultMeta, text: str):
         self._write_result(self._handler.stringify(meta, text))

@@ -1,8 +1,10 @@
 import base64
 import hashlib
+from pathlib import Path
 import re
 
 import pytest
+from argon2.low_level import hash_secret_raw
 
 import xvault.xvault as vault_module
 from xvault.xvault import XVault
@@ -141,6 +143,12 @@ def test_validate_valid_encrypted_file_is_ok(tmp_path):
 
     assert result["status"] == "ok"
     assert not any(check["severity"] == "error" for check in result["checks"])
+    assert [
+        check for check in result["checks"] if check["name"] == "password-validation"
+    ] == [{"name": "password-validation", "severity": "info", "message": "ok"}]
+    assert [check for check in result["checks"] if check["name"] == "decryp"] == [
+        {"name": "decryp", "severity": "info", "message": "ok"}
+    ]
 
 
 def test_validate_corrupted_encrypted_value_is_error(tmp_path):
@@ -154,7 +162,14 @@ def test_validate_corrupted_encrypted_value_is_error(tmp_path):
     result = vault.validate()
 
     assert result["status"] == "error"
-    assert any(check["name"] == "decryp" and check["severity"] == "error" for check in result["checks"])
+    assert [
+        check for check in result["checks"] if check["name"] == "password-validation"
+    ] == [{"name": "password-validation", "severity": "info", "message": "ok"}]
+    decryption_checks = [
+        check for check in result["checks"] if check["name"] == "decryp"
+    ]
+    assert len(decryption_checks) == 1
+    assert decryption_checks[0]["severity"] == "error"
 
 
 def test_validate_incorrect_password_is_error(tmp_path):
@@ -170,9 +185,38 @@ def test_validate_incorrect_password_is_error(tmp_path):
         for check in result["checks"]
         if check["name"] == "password-validation" and check["severity"] == "error"
     } == {"invalid password or metadata"}
+    assert len(
+        [check for check in result["checks"] if check["name"] == "password-validation"]
+    ) == 1
+    assert [check for check in result["checks"] if check["name"] == "decryp"] == [
+        {"name": "decryp", "severity": "info", "message": "unavailable"}
+    ]
 
 
 def test_validate_corrupted_wrapped_key_metadata_is_error(tmp_path):
+    _, vault = make_initialized_vault(tmp_path)
+    wrapped = bytearray(base64.urlsafe_b64decode(vault._meta.encrypted_key))
+    wrapped[-1] ^= 1
+    vault._meta.encrypted_key = base64.urlsafe_b64encode(wrapped).decode()
+
+    result = vault.validate()
+
+    assert result["status"] == "error"
+    assert [
+        check for check in result["checks"] if check["name"] == "password-validation"
+    ] == [
+        {
+            "name": "password-validation",
+            "severity": "error",
+            "message": "invalid password or metadata",
+        }
+    ]
+    assert [check for check in result["checks"] if check["name"] == "decryp"] == [
+        {"name": "decryp", "severity": "info", "message": "unavailable"}
+    ]
+
+
+def test_validate_malformed_wrapped_key_metadata_is_error(tmp_path):
     _, vault = make_initialized_vault(tmp_path)
     vault._meta.encrypted_key = "invalid-wrapped-key"
 
@@ -185,6 +229,46 @@ def test_validate_corrupted_wrapped_key_metadata_is_error(tmp_path):
     )
 
 
+def test_validate_locked_vault_reports_authentication_and_decryption_unavailable(
+    tmp_path,
+):
+    path, vault = make_initialized_vault(tmp_path)
+    vault.lock()
+
+    result = XVault(str(path)).validate()
+
+    assert result["status"] == "warning"
+    assert [
+        check for check in result["checks"] if check["name"] == "password-validation"
+    ] == [
+        {"name": "password-validation", "severity": "info", "message": "unavailable"}
+    ]
+    assert [check for check in result["checks"] if check["name"] == "decryp"] == [
+        {"name": "decryp", "severity": "info", "message": "unavailable"}
+    ]
+
+
+def test_validate_v1_fixture_keeps_single_successful_authentication_check(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(vault_module, "hash_secret_raw", hash_secret_raw)
+    fixture = Path(__file__).parent / "fixtures" / "v1.env"
+    path = tmp_path / "v1.env"
+    path.write_bytes(fixture.read_bytes())
+
+    result = XVault(
+        str(path), password="fixture-password", no_cache_key=True
+    ).validate()
+
+    assert result["status"] == "ok"
+    assert [
+        check for check in result["checks"] if check["name"] == "password-validation"
+    ] == [{"name": "password-validation", "severity": "info", "message": "ok"}]
+    assert [check for check in result["checks"] if check["name"] == "decryp"] == [
+        {"name": "decryp", "severity": "info", "message": "ok"}
+    ]
+
+
 def test_validate_missing_and_invalid_metadata_are_errors(tmp_path):
     missing_path = tmp_path / "missing.env"
     missing_path.write_text("PLAIN=visible\n", encoding="utf-8")
@@ -195,6 +279,16 @@ def test_validate_missing_and_invalid_metadata_are_errors(tmp_path):
     invalid_result = invalid_vault.validate()
 
     assert missing_result["status"] == "warning"
+    assert [
+        check
+        for check in missing_result["checks"]
+        if check["name"] == "password-validation"
+    ] == [
+        {"name": "password-validation", "severity": "info", "message": "unavailable"}
+    ]
+    assert [
+        check for check in missing_result["checks"] if check["name"] == "decryp"
+    ] == [{"name": "decryp", "severity": "info", "message": "unavailable"}]
     assert invalid_result["status"] == "error"
     assert any(check["name"] == "salt" and check["severity"] == "error" for check in invalid_result["checks"])
 
