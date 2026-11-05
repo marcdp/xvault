@@ -65,8 +65,6 @@ Verified handlers are available for `.json`, `.jsonc`, `.yaml`, `.yml`, `.env`, 
 
 ## Documentation
 
-## Documentation
-
 - [Usage guide](docs/usage.md)
 - [File-format reference](docs/reference.md)
 - [Internals and security model](docs/internals.md)
