@@ -375,12 +375,12 @@ class TestDecryption:
         with pytest.raises(Exception):
             vault_initialized._decrypt_value(invalid_encrypted)
 
-    def test_decrypt_updates_cache(self, vault_initialized):
-        """Test that decrypting enables ciphertext reuse for the plaintext."""
+    def test_decrypt_does_not_enable_ciphertext_reuse(self, vault_initialized):
+        """Decrypting must not affect later randomized encryption."""
         encrypted = vault_initialized._encrypt_value("secret_value")
 
         assert vault_initialized._decrypt_value(encrypted) == "secret_value"
-        assert vault_initialized._encrypt_value("secret_value") == encrypted
+        assert vault_initialized._encrypt_value("secret_value") != encrypted
 
     def test_decrypt_empty_string_round_trip(self, vault_initialized):
         """Test decrypting empty string."""
@@ -664,8 +664,8 @@ class TestCryptoEdgeCases:
         
         assert decrypted_values == plaintexts
 
-    def test_encrypt_decrypt_with_cache_hits(self, vault_initialized):
-        """Test that cache works correctly for repeated encryptions."""
+    def test_repeated_encryptions_remain_independent(self, vault_initialized):
+        """Repeated encryption always uses a fresh nonce."""
         plaintext = "repeated_value"
         
         # First encryption

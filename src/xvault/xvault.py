@@ -1,5 +1,7 @@
 import base64
 import copy
+from collections import defaultdict
+from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 import os
@@ -49,6 +51,23 @@ HANDLERS = {
 }
 
 
+@dataclass
+class _EditToken:
+    marker: str
+    plaintext: str
+    wrapped: bool
+    ciphertext: Optional[str] = None
+    context: tuple[str, int] = ("", 0)
+
+
+@dataclass
+class _EditDocument:
+    text: str
+    marked_text: str
+    skeleton: str
+    tokens: list[_EditToken]
+
+
 class HandlerXml(HandlerBase):
     """Compatibility stub for the unsupported XML format."""
 
@@ -91,20 +110,23 @@ class XVault():
 
     # methods
     def edit(self):
-        # decrypt
-        text = self._decrypt(self._text)
+        # Decrypt and capture ciphertext per occurrence. Preservation remains
+        # local to this edit and never becomes cryptographic object state.
+        original = self._prepare_edit_document()
         format = self._path.suffix.lstrip(".")
         crypto_version = self._meta.crypto_version
         # edit
         xeditor = XEditor()
-        result = xeditor.editText(text, format = format, title = f"Editing secrets in {self._path.resolve()} (v{crypto_version})")
+        result = xeditor.editText(original.text, format = format, title = f"Editing secrets in {self._path.resolve()} (v{crypto_version})")
         # apply changes
         if result is not None:
             # Prepare the complete candidate on isolated state. This matters for
             # first-time v2 initialization, where encryption creates metadata and
             # a DEK before any bytes are written.
             candidate_meta, candidate_crypto = copy.deepcopy((self._meta, self._crypto))
-            candidate_text = self._encrypt_with_crypto(result, candidate_crypto)
+            candidate_text = self._encrypt_edit_result(
+                result, original, candidate_crypto
+            )
             self._save_candidate(candidate_meta, candidate_text, candidate_crypto)
 
     def edit_secret(self, name: str):
@@ -672,6 +694,105 @@ class XVault():
             result = ENC_PREFIX + encrypted
             return "${" + result + "}" if is_wrapped else result
         return self._handler.replace_enc_tokens(text, encrypt_value)
+
+    def _prepare_edit_document(self) -> _EditDocument:
+        if self.is_unitialized() and not self._meta.encrypted_key:
+            return self._mark_edit_tokens(self._text, lambda value: (value, None))
+        crypto = self._get_crypto()
+        return self._mark_edit_tokens(
+            self._text, lambda value: (crypto.decrypt(value), value)
+        )
+
+    def _mark_edit_tokens(self, text: str, loader) -> _EditDocument:
+        """Replace token occurrences with private markers and describe context.
+
+        Handler callbacks are not assumed to run in source order. The returned
+        records are sorted by marker position after replacement instead.
+        """
+        marker_prefix = "\x00xvault-edit-token-"
+        while marker_prefix in text:
+            marker_prefix += "x"
+        tokens = []
+
+        def mark(value):
+            wrapped = value.startswith("${") and value.endswith("}")
+            token = value[2:-1] if wrapped else value
+            plaintext, ciphertext = loader(token[len(ENC_PREFIX):])
+            marker = f"{marker_prefix}{len(tokens)}\x00"
+            tokens.append(_EditToken(marker, plaintext, wrapped, ciphertext))
+            return marker
+
+        marked_text = self._handler.replace_enc_tokens(text, mark)
+        tokens.sort(key=lambda token: marked_text.index(token.marker))
+
+        skeleton = marked_text
+        rendered = marked_text
+        for token in tokens:
+            skeleton = skeleton.replace(token.marker, "<xvault-token>")
+            value = ENC_PREFIX + token.plaintext
+            if token.wrapped:
+                value = "${" + value + "}"
+            rendered = rendered.replace(token.marker, value)
+
+        lines = marked_text.splitlines(keepends=True)
+        for line in lines:
+            line_tokens = [token for token in tokens if token.marker in line]
+            if not line_tokens:
+                continue
+            normalized = line
+            for token in line_tokens:
+                normalized = normalized.replace(token.marker, "<xvault-token>")
+            normalized = normalized.rstrip("\r\n")
+            for ordinal, token in enumerate(
+                sorted(line_tokens, key=lambda item: line.index(item.marker))
+            ):
+                token.context = (normalized, ordinal)
+
+        return _EditDocument(rendered, marked_text, skeleton, tokens)
+
+    def _encrypt_edit_result(
+        self, result: str, original: _EditDocument, crypto: CryptoBase
+    ) -> str:
+        edited = self._mark_edit_tokens(result, lambda value: (value, None))
+        preserved: dict[str, str] = {}
+
+        # With an unchanged token skeleton, textual occurrence is a safe logical
+        # identity. This covers no-op edits and value-only changes in every format.
+        if (
+            original.skeleton == edited.skeleton
+            and len(original.tokens) == len(edited.tokens)
+        ):
+            pairs = zip(original.tokens, edited.tokens)
+        else:
+            # Structural edits are matched only through contexts unique on both
+            # sides. Ambiguous occurrences deliberately receive fresh ciphertext.
+            original_by_context = defaultdict(list)
+            edited_by_context = defaultdict(list)
+            for token in original.tokens:
+                original_by_context[token.context].append(token)
+            for token in edited.tokens:
+                edited_by_context[token.context].append(token)
+            pairs = (
+                (original_by_context[context][0], edited_by_context[context][0])
+                for context in original_by_context.keys() & edited_by_context.keys()
+                if len(original_by_context[context]) == 1
+                and len(edited_by_context[context]) == 1
+            )
+
+        for old, new in pairs:
+            if old.ciphertext is not None and old.plaintext == new.plaintext:
+                preserved[new.marker] = old.ciphertext
+
+        encrypted_text = edited.marked_text
+        for token in edited.tokens:
+            ciphertext = preserved.get(token.marker)
+            if ciphertext is None:
+                ciphertext = crypto.encrypt(token.plaintext)
+            value = ENC_PREFIX + ciphertext
+            if token.wrapped:
+                value = "${" + value + "}"
+            encrypted_text = encrypted_text.replace(token.marker, value)
+        return encrypted_text
 
     def _decrypt_value(self, encrypted_value: str) -> str:
         return self._get_crypto().decrypt(encrypted_value)

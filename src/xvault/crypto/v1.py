@@ -23,7 +23,6 @@ class CryptoV1(CryptoBase):
         self._meta = meta
         self._password = password
         self._key: Optional[bytes] = None
-        self._cache: dict[str, str] = {}
         self._cached_key_loader = cached_key_loader
         self._key_deriver = key_deriver
 
@@ -56,7 +55,6 @@ class CryptoV1(CryptoBase):
             type=Type.ID,
         )
         self._password = None
-        self._cache = {}
         return self._key
 
     def get_cacheable_key(self) -> bytes:
@@ -74,9 +72,6 @@ class CryptoV1(CryptoBase):
 
     def encrypt(self, value: str) -> str:
         key = self.get_key()
-        if value in self._cache:
-            return self._cache[value]
-
         aesgcm = AESGCM(key)
         nonce = os.urandom(12)
         ciphertext = aesgcm.encrypt(nonce, value.encode("utf-8"), None)
@@ -88,9 +83,7 @@ class CryptoV1(CryptoBase):
         encrypted_blob = base64.urlsafe_b64decode(encrypted_value)
         nonce = encrypted_blob[:12]
         ciphertext = encrypted_blob[12:]
-        plaintext = AESGCM(key).decrypt(nonce, ciphertext, None).decode("utf-8")
-        self._cache[plaintext] = encrypted_value
-        return plaintext
+        return AESGCM(key).decrypt(nonce, ciphertext, None).decode("utf-8")
 
     def replace_password(self, password: str) -> None:
         self._key = None

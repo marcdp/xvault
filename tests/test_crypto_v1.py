@@ -59,16 +59,16 @@ def test_crypto_v1_loads_an_existing_key_from_keyring():
     assert crypto.get_key() == original.get_key()
 
 
-def test_crypto_v1_reuses_ciphertext_after_decryption():
+def test_crypto_v1_does_not_reuse_ciphertext_after_decryption():
     meta = XVaultMeta(1, crypto_version=1, salt="44" * 16, check=None)
     crypto = CryptoV1(meta, password="test-password", key_deriver=fast_deriver)
     encrypted = crypto.encrypt("secret value")
 
     assert crypto.decrypt(encrypted) == "secret value"
-    assert crypto.encrypt("secret value") == encrypted
+    assert crypto.encrypt("secret value") != encrypted
 
 
-def test_crypto_v1_replaces_password_and_clears_ciphertext_cache():
+def test_crypto_v1_replaces_password_without_reusing_old_ciphertext():
     meta = XVaultMeta(1, crypto_version=1, salt="55" * 16, check=None)
     crypto = CryptoV1(meta, password="old-password", key_deriver=fast_deriver)
     old_key = crypto.get_key()

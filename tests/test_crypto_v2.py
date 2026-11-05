@@ -47,11 +47,11 @@ def test_v2_generates_and_wraps_one_random_32_byte_dek():
     assert len(base64.urlsafe_b64decode(encrypted)[:12]) == 12
 
 
-def test_v2_round_trip_unicode_and_reuses_decrypted_ciphertext():
+def test_v2_round_trip_unicode_and_keeps_encryption_randomized():
     _, crypto = new_crypto()
     encrypted = crypto.encrypt("Héllo 密码 🔐")
     assert crypto.decrypt(encrypted) == "Héllo 密码 🔐"
-    assert crypto.encrypt("Héllo 密码 🔐") == encrypted
+    assert crypto.encrypt("Héllo 密码 🔐") != encrypted
 
 
 def test_v2_persists_across_instances_and_cached_kek():

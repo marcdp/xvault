@@ -42,7 +42,6 @@ class CryptoV2(CryptoBase):
         self._password = password
         self._kek: Optional[bytes] = None
         self._dek: Optional[bytes] = None
-        self._cache: dict[str, str] = {}
         self._cached_key_loader = cached_key_loader
         self._key_deriver = key_deriver
         self._random_bytes = random_bytes
@@ -144,8 +143,6 @@ class CryptoV2(CryptoBase):
             self._dek = dek
 
     def encrypt(self, value: str) -> str:
-        if value in self._cache:
-            return self._cache[value]
         dek = self._get_dek()
         nonce = self._random_bytes(12)
         blob = nonce + AESGCM(dek).encrypt(nonce, value.encode("utf-8"), None)
@@ -156,9 +153,7 @@ class CryptoV2(CryptoBase):
         blob = self._decode_blob(encrypted_value, "ciphertext")
         if len(blob) < 28:
             raise ValueError("Invalid ciphertext length")
-        plaintext = AESGCM(dek).decrypt(blob[:12], blob[12:], None).decode("utf-8")
-        self._cache[plaintext] = encrypted_value
-        return plaintext
+        return AESGCM(dek).decrypt(blob[:12], blob[12:], None).decode("utf-8")
 
     def prepare_password_rotation(self, password: str) -> PasswordRotation:
         if not password:
