@@ -108,7 +108,12 @@ The repository supports the design claims with source and regression tests rathe
 
 The [CI configuration](../.github/workflows/ci.yml) includes Python 3.12/3.13 testing on Linux, Python 3.12 testing on Windows and macOS, and build/installation checks for distributions. A configured pipeline is not a substitute for inspecting the results of a particular run. This case study does **not** claim that an independent security audit or formal protocol verification has been performed.
 
-A useful further experiment is to benchmark v1 versus v2 password rotation at several vault sizes and publish the test conditions, execution times, and Git diff sizes. The architecture predicts less ciphertext churn for v2; numerical performance claims should wait until they are measured.
+The [password rotation benchmark](rekey_benchmark.md) compares
+CryptoV1 and CryptoV2 using synthetic vaults with 10, 100, and
+1,000 secrets. In the 1,000-secret experiment, CryptoV2
+preserved all secret ciphertexts and reduced unified-diff
+size by 99.66%. The measurements do not establish a
+significant execution-time advantage.
 
 ## Security boundaries and accepted trade-offs
 

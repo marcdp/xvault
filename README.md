@@ -69,6 +69,7 @@ Verified handlers are available for `.json`, `.jsonc`, `.yaml`, `.yml`, `.env`, 
 - [File-format reference](docs/reference.md)
 - [Internals and security model](docs/internals.md)
 - [Engineering case study](docs/engineering-case-study.md) — Architecture evolution, design decisions, trade-offs, and interoperability.
+- [Rekey benchmark](docs/rekey-benchmark.md) — Measured CryptoV1 vs. CryptoV2 password-rotation behavior.
 
 CryptoV1 files remain readable and writable and are upgraded only by the explicit
 `xvault upgrade` command. New vaults use CryptoV2 envelope encryption: a
