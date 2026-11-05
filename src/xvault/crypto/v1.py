@@ -1,5 +1,6 @@
 import base64
 import os
+import secrets
 from collections.abc import Callable
 from typing import Optional
 
@@ -26,6 +27,17 @@ class CryptoV1(CryptoBase):
         self._cached_key_loader = cached_key_loader
         self._key_deriver = key_deriver
 
+    def _derive(self, password: str) -> bytes:
+        return self._key_deriver(
+            secret=password.encode(),
+            salt=bytes.fromhex(self._meta.salt),
+            time_cost=5,
+            memory_cost=131072,
+            parallelism=4,
+            hash_len=32,
+            type=Type.ID,
+        )
+
     def get_key(self) -> bytes:
         """Return the cached, keyring-backed, or newly derived version 1 key."""
         if self._password is None and self._key is None and self._cached_key_loader:
@@ -45,15 +57,7 @@ class CryptoV1(CryptoBase):
 
         if not self._meta.salt:
             self._meta.salt = os.urandom(16).hex()
-        self._key = self._key_deriver(
-            secret=self._password.encode(),
-            salt=bytes.fromhex(self._meta.salt),
-            time_cost=5,
-            memory_cost=131072,
-            parallelism=4,
-            hash_len=32,
-            type=Type.ID,
-        )
+        self._key = self._derive(self._password)
         self._password = None
         return self._key
 
@@ -69,6 +73,32 @@ class CryptoV1(CryptoBase):
             raise ValueError("Unable to validate password: invalid password") from error
         if value != META_CHECK_VALUE:
             raise ValueError("Unable to validate password: invalid password")
+
+    def verify_password(self, password: str) -> None:
+        """Verify a supplied password against the active v1 key without mutation."""
+        if not password:
+            raise ValueError("Unable to verify password: password is required")
+
+        if self._key is not None:
+            active_key = self._key
+        elif self._password:
+            active_key = self._derive(self._password)
+        elif self._cached_key_loader:
+            encoded_key = self._cached_key_loader()
+            if not encoded_key:
+                raise ValueError("Unable to get key: store is locked. Password required.")
+            try:
+                active_key = base64.b64decode(encoded_key, validate=True)
+            except ValueError as error:
+                raise ValueError(
+                    "Unable to validate password: invalid cached key"
+                ) from error
+        else:
+            raise ValueError("Unable to get key: store is locked. Password required.")
+
+        candidate_key = self._derive(password)
+        if not secrets.compare_digest(candidate_key, active_key):
+            raise ValueError("Unable to verify password: invalid password")
 
     def encrypt(self, value: str) -> str:
         key = self.get_key()

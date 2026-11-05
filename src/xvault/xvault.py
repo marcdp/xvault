@@ -300,8 +300,12 @@ class XVault():
             raise ValueError("Unable to upgrade: vault already uses crypto version 2")
         if not password:
             raise ValueError("Unable to upgrade: password is required")
+        active_crypto = self._get_crypto()
+        if not isinstance(active_crypto, CryptoV1):
+            raise ValueError("Unable to upgrade: invalid crypto implementation")
         self._validate_password()
-        plaintext_text = self._decrypt(self._text)
+        active_crypto.verify_password(password)
+        plaintext_text = self._decrypt_with_crypto(self._text, active_crypto)
         candidate_meta = XVaultMeta.new(schema_version=self._meta.schema_version)
         candidate_crypto = CryptoV2(candidate_meta, password=password, key_deriver=hash_secret_raw)
         encrypted_text = self._encrypt_with_crypto(plaintext_text, candidate_crypto)

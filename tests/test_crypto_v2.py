@@ -4,10 +4,12 @@ from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import keyring
 
 from xvault.crypto import CryptoBase, CryptoV2
 from xvault.crypto.v2 import DEK_AAD
 from xvault.meta import XVaultMeta
+import xvault.xvault as vault_module
 from xvault.xvault import XVault
 
 
@@ -207,6 +209,125 @@ def test_upgrade_v1_fixture_to_v2_and_reject_second_upgrade(tmp_path):
     assert XVault(str(path), password="fixture-password", no_cache_key=True).get("SECRET") == "fixture-secret"
     with pytest.raises(ValueError, match="already uses"):
         vault.upgrade("fixture-password")
+
+
+def test_upgrade_rejects_wrong_password_without_preparing_or_mutating_state(
+    tmp_path, monkeypatch
+):
+    fixture = Path(__file__).parent / "fixtures" / "v1.env"
+    path = tmp_path / "vault.env"
+    path.write_bytes(fixture.read_bytes())
+    vault = XVault(str(path), password="fixture-password", no_cache_key=True)
+    vault._validate_password()
+    before = path.read_bytes()
+    original_meta = vault._meta
+    original_meta_dict = vault._meta.to_dict()
+    original_text = vault._text
+    original_crypto = vault._crypto
+    original_key = vault._crypto._key
+    created_candidates = []
+    crypto_v2 = vault_module.CryptoV2
+
+    def track_candidate(*args, **kwargs):
+        created_candidates.append(args[0])
+        return crypto_v2(*args, **kwargs)
+
+    monkeypatch.setattr(vault_module, "CryptoV2", track_candidate)
+
+    with pytest.raises(ValueError, match="invalid password"):
+        vault.upgrade("incorrect-password")
+
+    assert created_candidates == []
+    assert path.read_bytes() == before
+    assert vault._meta is original_meta
+    assert vault._meta.to_dict() == original_meta_dict
+    assert vault._text == original_text
+    assert vault._crypto is original_crypto
+    assert vault._crypto._key is original_key
+    assert vault._meta.crypto_version == 1
+    assert vault.get("SECRET") == "fixture-secret"
+
+    vault.upgrade("fixture-password")
+
+    assert len(created_candidates) == 1
+    assert vault._meta.crypto_version == 2
+    assert (
+        XVault(str(path), password="fixture-password", no_cache_key=True).get("SECRET")
+        == "fixture-secret"
+    )
+
+
+def test_upgrade_verifies_password_when_v1_key_came_from_keyring(tmp_path):
+    fixture = Path(__file__).parent / "fixtures" / "v1.env"
+    path = tmp_path / "vault.env"
+    path.write_bytes(fixture.read_bytes())
+    unlocked = XVault(str(path), password="fixture-password")
+    old_store_name = unlocked._get_keyring_store_name(version=1)
+    new_store_name = unlocked._get_keyring_store_name(version=2)
+    cached_key = keyring.get_password(old_store_name, "username")
+    vault = XVault(str(path))
+    vault._validate_password()
+    before = path.read_bytes()
+    original_meta = vault._meta
+    original_text = vault._text
+    original_crypto = vault._crypto
+    original_key = vault._crypto._key
+
+    with pytest.raises(ValueError, match="invalid password"):
+        vault.upgrade("incorrect-password")
+
+    assert path.read_bytes() == before
+    assert vault._meta is original_meta
+    assert vault._text == original_text
+    assert vault._crypto is original_crypto
+    assert vault._crypto._key is original_key
+    assert keyring.get_password(old_store_name, "username") == cached_key
+    assert keyring.get_password(new_store_name, "username") is None
+    assert vault.get("SECRET") == "fixture-secret"
+
+    vault.upgrade("fixture-password")
+
+    assert vault._meta.crypto_version == 2
+    assert keyring.get_password(old_store_name, "username") is None
+    assert keyring.get_password(new_store_name, "username") is not None
+    assert XVault(str(path)).get("SECRET") == "fixture-secret"
+
+
+def test_upgrade_verifies_password_for_legacy_v1_metadata_without_check(tmp_path):
+    fixture = Path(__file__).parent / "fixtures" / "v1.env"
+    path = tmp_path / "vault.env"
+    path.write_bytes(fixture.read_bytes())
+    setup = XVault(str(path), password="fixture-password", no_cache_key=True)
+    setup._meta.check = None
+    path.write_text(
+        setup._handler.stringify(setup._meta, setup._text), encoding="utf-8"
+    )
+    vault = XVault(str(path), password="fixture-password", no_cache_key=True)
+    assert vault.get("SECRET") == "fixture-secret"
+    before = path.read_bytes()
+    original_meta = vault._meta
+    original_text = vault._text
+    original_crypto = vault._crypto
+    original_key = vault._crypto._key
+
+    with pytest.raises(ValueError, match="invalid password"):
+        vault.upgrade("incorrect-password")
+
+    assert path.read_bytes() == before
+    assert vault._meta is original_meta
+    assert vault._meta.check is None
+    assert vault._text == original_text
+    assert vault._crypto is original_crypto
+    assert vault._crypto._key is original_key
+    assert vault.get("SECRET") == "fixture-secret"
+
+    vault.upgrade("fixture-password")
+
+    assert vault._meta.crypto_version == 2
+    assert (
+        XVault(str(path), password="fixture-password", no_cache_key=True).get("SECRET")
+        == "fixture-secret"
+    )
 
 
 def test_failed_upgrade_preserves_original_v1_file(tmp_path, monkeypatch):

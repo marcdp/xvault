@@ -50,6 +50,21 @@ def test_crypto_v1_derives_the_same_key_for_the_same_password_and_salt():
     assert first.get_key() == second.get_key()
 
 
+def test_crypto_v1_verifies_a_supplied_password_without_changing_active_state():
+    meta = XVaultMeta(1, crypto_version=1, salt="24" * 16, check=None)
+    crypto = CryptoV1(meta, password="test-password", key_deriver=fast_deriver)
+    original_password = crypto._password
+
+    crypto.verify_password("test-password")
+
+    assert crypto._key is None
+    assert crypto._password == original_password
+    with pytest.raises(ValueError, match="invalid password"):
+        crypto.verify_password("wrong-password")
+    assert crypto._key is None
+    assert crypto._password == original_password
+
+
 def test_crypto_v1_loads_an_existing_key_from_keyring():
     meta = XVaultMeta(1, crypto_version=1, salt="33" * 16, check=None)
     original = CryptoV1(meta, password="test-password", key_deriver=fast_deriver)
