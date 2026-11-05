@@ -167,6 +167,34 @@ def test_v2_failed_rekey_save_preserves_file_and_active_state(tmp_path, monkeypa
     assert vault.get("SECRET") == "secret value"
 
 
+def test_v2_failed_rekey_preparation_preserves_file_and_active_state(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr("xvault.xvault.hash_secret_raw", fast_deriver)
+    path = tmp_path / "vault.env"
+    path.write_text("PLAIN=visible\n", encoding="utf-8")
+    vault = XVault(str(path), password="old-password")
+    vault.set("SECRET", "secret value")
+    before = path.read_bytes()
+    old_meta = vault._meta
+    old_text = vault._text
+    old_crypto = vault._crypto
+    monkeypatch.setattr(
+        vault._crypto,
+        "_derive",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("derivation failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="derivation failed"):
+        vault.rekey("new-password")
+
+    assert path.read_bytes() == before
+    assert vault._meta is old_meta
+    assert vault._text == old_text
+    assert vault._crypto is old_crypto
+    assert vault.get("SECRET") == "secret value"
+
+
 def test_upgrade_v1_fixture_to_v2_and_reject_second_upgrade(tmp_path):
     fixture = Path(__file__).parent / "fixtures" / "v1.env"
     path = tmp_path / "vault.env"

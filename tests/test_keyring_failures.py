@@ -62,8 +62,36 @@ def test_lock_treats_an_absent_credential_as_already_removed(tmp_path, monkeypat
         "keyring.delete_password",
         lambda *args: (_ for _ in ()).throw(PasswordDeleteError("not found")),
     )
+    monkeypatch.setattr("keyring.get_password", lambda *args: None)
 
     vault.lock()
+
+
+def test_lock_rejects_failed_deletion_when_credential_remains(tmp_path, monkeypatch):
+    _, vault = make_v2_vault(tmp_path)
+    monkeypatch.setattr(
+        "keyring.delete_password",
+        lambda *args: (_ for _ in ()).throw(PasswordDeleteError("delete failed")),
+    )
+    monkeypatch.setattr("keyring.get_password", lambda *args: "still-present")
+
+    with pytest.raises(PasswordDeleteError, match="still present"):
+        vault.lock()
+
+
+def test_lock_propagates_failed_deletion_verification(tmp_path, monkeypatch):
+    _, vault = make_v2_vault(tmp_path)
+    monkeypatch.setattr(
+        "keyring.delete_password",
+        lambda *args: (_ for _ in ()).throw(PasswordDeleteError("delete failed")),
+    )
+    monkeypatch.setattr(
+        "keyring.get_password",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("verification failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="verification failed"):
+        vault.lock()
 
 
 def test_lock_propagates_unexpected_keyring_errors(tmp_path, monkeypatch):
@@ -102,6 +130,40 @@ def test_cli_does_not_report_lock_success_when_deletion_fails(
         cli.lock("vault.env")
 
     assert "locked." not in capsys.readouterr().out
+
+
+def test_failed_cache_cleanup_warns_when_credential_remains(tmp_path, monkeypatch):
+    _, vault = make_v2_vault(tmp_path)
+    monkeypatch.setattr(
+        "keyring.set_password",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("cache write failed")),
+    )
+    monkeypatch.setattr(
+        "keyring.delete_password",
+        lambda *args: (_ for _ in ()).throw(PasswordDeleteError("delete failed")),
+    )
+    monkeypatch.setattr("keyring.get_password", lambda *args: "still-present")
+
+    with pytest.warns(RuntimeWarning, match="could not be removed or verified absent"):
+        with pytest.raises(RuntimeError, match="cache write failed"):
+            vault.unlock()
+
+
+def test_save_prepares_cacheable_key_before_commit(tmp_path, monkeypatch):
+    path, vault = make_v2_vault(tmp_path)
+    before = path.read_bytes()
+    original_text = vault._text
+    monkeypatch.setattr(
+        vault._crypto,
+        "get_cacheable_key",
+        lambda: (_ for _ in ()).throw(RuntimeError("cache key unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="cache key unavailable"):
+        vault.set("SECOND", "never-committed")
+
+    assert path.read_bytes() == before
+    assert vault._text == original_text
 
 
 def test_save_warns_but_keeps_committed_file_when_cache_write_fails(
@@ -227,6 +289,85 @@ def test_upgrade_warns_but_keeps_committed_v2_file_when_cache_write_fails(
         str(path), password="fixture-password", no_cache_key=True
     )
     assert reopened.get("SECRET") == "fixture-secret"
+
+
+def test_upgrade_warns_when_obsolete_v1_cache_cannot_be_verified_removed(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(vault_module, "hash_secret_raw", hash_secret_raw)
+    fixture = Path(__file__).parent / "fixtures" / "v1.env"
+    path = tmp_path / "vault.env"
+    path.write_bytes(fixture.read_bytes())
+    vault = XVault(str(path), password="fixture-password")
+    old_store_name = vault._get_keyring_store_name(version=1)
+    original_delete = vault_module.keyring.delete_password
+
+    def fail_old_cache_delete(service, username):
+        if service == old_store_name:
+            raise PasswordDeleteError("delete failed")
+        original_delete(service, username)
+
+    monkeypatch.setattr("keyring.delete_password", fail_old_cache_delete)
+
+    with pytest.warns(
+        RuntimeWarning, match="old cached credential could not be verified as removed"
+    ):
+        vault.upgrade("fixture-password")
+
+    assert vault_module.keyring.get_password(old_store_name, "username") is not None
+    assert vault._meta.crypto_version == 2
+    assert (
+        XVault(str(path), password="fixture-password", no_cache_key=True).get("SECRET")
+        == "fixture-secret"
+    )
+
+
+def test_v1_rekey_cacheable_key_failure_precedes_commit(tmp_path, monkeypatch):
+    monkeypatch.setattr(vault_module, "hash_secret_raw", hash_secret_raw)
+    fixture = Path(__file__).parent / "fixtures" / "v1.env"
+    path = tmp_path / "vault.env"
+    path.write_bytes(fixture.read_bytes())
+    vault = XVault(str(path), password="fixture-password")
+    before = path.read_bytes()
+    original_meta = vault._meta
+    original_text = vault._text
+    original_crypto = vault._crypto
+    monkeypatch.setattr(
+        "xvault.xvault.CryptoV1.get_cacheable_key",
+        lambda self: (_ for _ in ()).throw(RuntimeError("cache key unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="cache key unavailable"):
+        vault.rekey("new-password")
+
+    assert path.read_bytes() == before
+    assert vault._meta is original_meta
+    assert vault._text == original_text
+    assert vault._crypto is original_crypto
+
+
+def test_upgrade_cacheable_key_failure_precedes_commit(tmp_path, monkeypatch):
+    monkeypatch.setattr(vault_module, "hash_secret_raw", hash_secret_raw)
+    fixture = Path(__file__).parent / "fixtures" / "v1.env"
+    path = tmp_path / "vault.env"
+    path.write_bytes(fixture.read_bytes())
+    vault = XVault(str(path), password="fixture-password")
+    before = path.read_bytes()
+    original_meta = vault._meta
+    original_text = vault._text
+    original_crypto = vault._crypto
+    monkeypatch.setattr(
+        "xvault.xvault.CryptoV2.get_cacheable_key",
+        lambda self: (_ for _ in ()).throw(RuntimeError("cache key unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="cache key unavailable"):
+        vault.upgrade("fixture-password")
+
+    assert path.read_bytes() == before
+    assert vault._meta is original_meta
+    assert vault._text == original_text
+    assert vault._crypto is original_crypto
 
 
 def test_explicit_unlock_propagates_cache_write_failure(tmp_path, monkeypatch):

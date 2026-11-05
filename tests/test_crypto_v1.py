@@ -2,6 +2,7 @@ import base64
 import hashlib
 from pathlib import Path
 
+import keyring
 import pytest
 
 from xvault.crypto import CryptoBase, CryptoV1
@@ -113,11 +114,53 @@ def test_rekey_keeps_the_v1_salt_and_reencrypts_values(tmp_path, monkeypatch):
     path.write_bytes(fixture.read_bytes())
     vault = XVault(str(path), password="fixture-password", no_cache_key=True)
     original_salt = vault._meta.salt
+    original_ciphertext = vault._handler.getValue(vault._text, "SECRET")
 
     vault.rekey("new-password")
 
     assert vault._meta.salt == original_salt
+    assert vault._handler.getValue(vault._text, "SECRET") != original_ciphertext
+    committed = XVault(str(path), password="new-password", no_cache_key=True)
+    assert vault._meta.to_dict() == committed._meta.to_dict()
+    assert vault._text == committed._text
     assert XVault(str(path), password="new-password", no_cache_key=True).get("SECRET") == "fixture-secret"
-    old_password_vault = XVault(str(path), password="old-password", no_cache_key=True)
+    old_password_vault = XVault(str(path), password="fixture-password", no_cache_key=True)
     with pytest.raises(ValueError, match="invalid password"):
         old_password_vault._validate_password()
+
+
+def test_failed_v1_rekey_replace_preserves_file_active_state_and_cache(
+    tmp_path, monkeypatch
+):
+    fixture = Path(__file__).parent / "fixtures" / "v1.env"
+    path = tmp_path / "vault.env"
+    path.write_bytes(fixture.read_bytes())
+    vault = XVault(str(path), password="fixture-password")
+    before = path.read_bytes()
+    original_meta = vault._meta
+    original_meta_dict = vault._meta.to_dict()
+    original_text = vault._text
+    original_crypto = vault._crypto
+    store_name = vault._get_keyring_store_name()
+    cached_key = keyring.get_password(store_name, "username")
+
+    monkeypatch.setattr(
+        "xvault.xvault.os.replace",
+        lambda *args: (_ for _ in ()).throw(OSError("simulated replace failure")),
+    )
+
+    with pytest.raises(OSError, match="simulated replace failure"):
+        vault.rekey("new-password")
+
+    assert path.read_bytes() == before
+    assert vault._meta is original_meta
+    assert vault._meta.to_dict() == original_meta_dict
+    assert vault._text == original_text
+    assert vault._crypto is original_crypto
+    assert vault.get("SECRET") == "fixture-secret"
+    assert keyring.get_password(store_name, "username") == cached_key
+    assert not list(tmp_path.glob(".vault.env.*.tmp"))
+    assert (
+        XVault(str(path), password="fixture-password", no_cache_key=True).get("SECRET")
+        == "fixture-secret"
+    )
